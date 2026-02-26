@@ -1756,9 +1756,10 @@ function submitSale(pkgLabel) {
     schedBookSlot(selSlot.date, selSlot.time, first + ' ' + last, fullAddress);
   }
 
-  addr.status = (selPkg === 'mega') ? 'mega' : 'gig';
+  addr.status      = (selPkg === 'mega') ? 'mega' : 'gig';
   addr.salesperson = repName;
-  addr.sale   = { firstName: first, lastName: last, phone: phone, email: email, notes: notes };
+  addr.knockedAt   = new Date().toISOString();   // ← stamp for analytics time-of-day chart
+  addr.sale        = { firstName: first, lastName: last, phone: phone, email: email, notes: notes };
   updateAddressStatus(addr, addr.status);
   addr.note = (notes || '').trim();
   if (addr.lat && addr.lng) placeMarker(addr);
@@ -1798,9 +1799,10 @@ function submitStatus() {
   maybeWriteNewAddrToSheet(addr);
 
   var smap = { 'Not Home':'nothome','Brightspeed':'brightspeed','In Contract':'incontract','Not Interested':'notinterested','Go Back Later':'goback','Vacant':'vacant','Business':'business' };
-  addr.status = smap[selStatus] || 'nocontact';
+  addr.status     = smap[selStatus] || 'nocontact';
   addr.salesperson = repName;
-  addr.note = notes || '';
+  addr.note       = notes || '';
+  addr.knockedAt  = new Date().toISOString();   // ← fix: stamp locally so follow-up queue has the time
   updateAddressStatus(addr, addr.status, notes);
   if (addr.lat && addr.lng) placeMarker(addr);
   updateStats();
@@ -2456,41 +2458,48 @@ function renderCoverageTab() {
   var el = document.getElementById('cov-territory-bars');
   if (!el) return;
 
-  // Group knockable addresses by territory — existing customers excluded
-  var terrMap = {};
+  // Group knockable addresses by territory — normalize names to prevent case-split buckets
+  var terrMap    = {};
+  var displayMap = {};
   addresses.forEach(function(a) {
     if (!isKnockable(a)) return;
-    var t = (a.territory || 'Unknown').trim();
-    if (!terrMap[t]) terrMap[t] = { total: 0, worked: 0, sold: 0 };
-    terrMap[t].total++;
+    var raw        = (a.territory || 'Unknown').trim();
+    var key        = raw.toLowerCase();              // normalized group key
+    displayMap[key] = displayMap[key] || raw;        // keep first-seen capitalisation
+    if (!terrMap[key]) terrMap[key] = { total: 0, worked: 0, sold: 0 };
+    terrMap[key].total++;
     var s = (a.status || 'pending').toLowerCase();
-    if (s !== 'pending' && s !== '') terrMap[t].worked++;
-    if (s === 'mega' || s === 'gig') terrMap[t].sold++;
+    if (s !== 'pending' && s !== '') terrMap[key].worked++;
+    if (s === 'mega' || s === 'gig') terrMap[key].sold++;
   });
 
-  var names = Object.keys(terrMap).sort();
-  if (names.length === 0) {
+  var keys = Object.keys(terrMap).sort();
+  if (keys.length === 0) {
     el.innerHTML = '<div style="text-align:center;padding:16px;font-size:11px;color:var(--muted);">No territory data available</div>';
     return;
   }
 
-  el.innerHTML = names.map(function(t) {
-    var d = terrMap[t];
+  el.innerHTML = keys.map(function(key) {
+    var d       = terrMap[key];
+    var name    = displayMap[key] || key;
     var covPct  = d.total > 0 ? d.worked / d.total : 0;
-    var soldPct = d.total > 0 ? d.sold / d.total : 0;
-    // Gradient: sold (green) fills left portion, rest of worked (blue) fills remaining
+    var soldPct = d.total > 0 ? d.sold   / d.total : 0;
     var soldW   = (soldPct * 100).toFixed(1);
-    var workedW = ((covPct - soldPct) * 100).toFixed(1);
+    var restW   = ((covPct - soldPct) * 100).toFixed(1);
+    var cr      = d.worked > 0 ? Math.round((d.sold / d.worked) * 100) : 0;
+
     return '<div class="cov-terr-row">' +
       '<div class="cov-terr-header">' +
-        '<span class="cov-terr-name">' + escHtml(t) + '</span>' +
+        '<span class="cov-terr-name">' + escHtml(name) + '</span>' +
         '<span class="cov-terr-stats">' +
-          d.worked + '/' + d.total + ' worked · ' + pct(covPct) + ' coverage · ' + d.sold + ' sales' +
+          d.worked + '/' + d.total + ' worked · ' + pct(covPct) +
+          ' coverage · ' + d.sold + ' sales' +
+          (d.worked >= 5 ? ' · ' + cr + '% CR' : '') +
         '</span>' +
       '</div>' +
-      '<div class="cov-track">' +
-        '<div class="cov-fill" style="width:' + soldW + '%;background:#10b981;float:left"></div>' +
-        '<div class="cov-fill" style="width:' + workedW + '%;background:rgba(0,86,150,.6);float:left"></div>' +
+      '<div class="cov-track" style="display:flex">' +
+        '<div class="cov-fill" style="width:' + soldW + '%;background:#10b981;flex-shrink:0"></div>' +
+        '<div class="cov-fill" style="width:' + restW + '%;background:rgba(0,86,150,.6);flex-shrink:0"></div>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -2731,19 +2740,26 @@ function renderSaturation() {
     var cov = d.total > 0 ? d.worked / d.total : 0;
     var cr  = d.worked > 0 ? d.sales / d.worked : 0;
 
-    // Saturation signal
+    // Saturation signal — requires a meaningful sample before calling anything alarming.
+    // A brand-new territory with only 10 doors knocked should never read "Saturated"
+    // even if that happens to be 95% of a tiny loaded list.
     var sig, sigColor, sigIcon;
-    if (cov >= 0.90) {
-      sig = 'Saturated — consider rotating reps out';
+    var enoughData = d.worked >= 30;  // need at least 30 doors knocked for a meaningful signal
+
+    if (!enoughData) {
+      sig = 'Early — not enough data yet (' + d.worked + ' doors knocked)';
+      sigColor = '#8b949e'; sigIcon = '⚪';
+    } else if (cov >= 0.90) {
+      sig = 'Very high coverage — review remaining homes before rotating';
       sigColor = '#ef4444'; sigIcon = '🔴';
-    } else if (cov >= 0.70) {
-      sig = 'Well-worked — push for closes on remaining homes';
+    } else if (cov >= 0.75) {
+      sig = 'Well-worked — strong coverage, keep pushing closes';
       sigColor = '#facc15'; sigIcon = '🟡';
-    } else if (cov >= 0.40) {
-      sig = 'Active — good opportunity remaining';
+    } else if (cov >= 0.45) {
+      sig = 'Active — solid progress, good opportunity remaining';
       sigColor = '#10b981'; sigIcon = '🟢';
     } else {
-      sig = 'Fresh territory — high opportunity';
+      sig = 'Fresh territory — high opportunity, keep knocking';
       sigColor = '#06b6d4'; sigIcon = '🔵';
     }
 
@@ -2753,7 +2769,7 @@ function renderSaturation() {
     return '<div class="ti-terr-card">' +
       '<div class="ti-terr-header">' +
         '<div>' +
-          '<div class="ti-terr-name">' + escHtml(t) + '</div>' +
+          '<div class="ti-terr-name">' + escHtml(d._display || t) + '</div>' +
           '<div class="ti-terr-sig" style="color:' + sigColor + '">' + sigIcon + ' ' + sig + '</div>' +
         '</div>' +
         '<div class="ti-terr-pct" style="color:' + sigColor + '">' + covW + '%</div>' +
@@ -2796,6 +2812,7 @@ function renderCompetitorByTerritory() {
 
   rows += names.map(function(t) {
     var d       = terrMap[t];
+    var display = d._display || t;
     var total   = d.total || 1;
     var open    = total - d.brightspeed - d.incontract - d.sales;
     open = Math.max(open, 0);
@@ -2809,7 +2826,7 @@ function renderCompetitorByTerritory() {
     }
 
     return '<div class="ti-comp-row">' +
-      '<span class="ti-comp-terr" title="' + escHtml(t) + '">' + escHtml(t) + '</span>' +
+      '<span class="ti-comp-terr" title="' + escHtml(display) + '">' + escHtml(display) + '</span>' +
       bar(d.brightspeed, '#ef4444') +
       bar(d.incontract,  '#818cf8') +
       bar(d.sales,       '#10b981') +
@@ -2839,14 +2856,22 @@ function renderStaleList() {
     var label   = s === 'goback' ? 'Go Back' : 'Not Home';
     var color   = s === 'goback' ? '#06b6d4' : '#d97706';
 
-    var age = '';
+    // Relative age + absolute timestamp so managers can verify
+    var ageStr  = '';
+    var timeStr = '';
     if (a.knockedAt) {
-      var hrs = (now - new Date(a.knockedAt).getTime()) / 3600000;
-      age = hrs < 1 ? Math.round(hrs * 60) + 'm ago'
-          : hrs < 24 ? hrs.toFixed(1) + 'h ago'
+      var ts  = new Date(a.knockedAt);
+      var hrs = (now - ts.getTime()) / 3600000;
+      ageStr  = hrs < 1
+        ? Math.round(hrs * 60) + 'm ago'
+        : hrs < 24
+          ? hrs.toFixed(1) + 'h ago'
           : Math.floor(hrs / 24) + 'd ago';
+      timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+                ' · ' + ts.toLocaleDateString([], { month: 'short', day: 'numeric' });
     } else {
-      age = 'unknown';
+      ageStr  = 'No timestamp';
+      timeStr = 'Dispositioned before session start';
     }
 
     var dist = '';
@@ -2863,10 +2888,11 @@ function renderStaleList() {
           '<span style="color:' + color + '">' + label + '</span>' +
           (a.note ? ' · ' + escHtml(a.note.substring(0, 40)) : '') +
         '</div>' +
+        '<div class="ti-stale-time">' + escHtml(timeStr) + '</div>' +
       '</div>' +
       '<div class="ti-stale-right">' +
         (dist ? '<div class="ti-stale-dist">' + dist + '</div>' : '') +
-        '<div class="ti-stale-age">' + age + '</div>' +
+        '<div class="ti-stale-age" style="color:' + color + '">' + ageStr + '</div>' +
       '</div>' +
     '</div>';
   }).join('') +
@@ -2898,34 +2924,35 @@ function renderDeployRecommendations() {
              (a.status === 'nothome' || a.status === 'goback');
     }).length;
 
-    // Rule engine
-    if (cov >= 0.90) {
+    // Rule engine — all rules require a meaningful sample size to avoid false alarms
+    // in territories that have only been worked for a day or two.
+    if (cov >= 0.90 && d.worked >= 50) {
       recs.push({
         territory: t, priority: 'high',
         icon: '🔴',
-        action: 'Rotate out — ' + (cov * 100).toFixed(0) + '% worked, only ' + pending + ' homes left',
-        detail: 'Territory is effectively saturated. Move reps to a fresh area to maintain pace.'
+        action: 'Very high coverage — ' + (cov * 100).toFixed(0) + '% worked, ' + pending + ' homes remaining',
+        detail: 'Territory has been heavily covered. Review the remaining homes and consider shifting rep hours once pending drops below 10%.'
       });
-    } else if (staleCount >= 10 && cov >= 0.50) {
+    } else if (staleCount >= 10 && cov >= 0.45 && d.worked >= 20) {
       recs.push({
         territory: t, priority: 'medium',
         icon: '🔄',
         action: 'Schedule a revisit day — ' + staleCount + ' Not Home / Go Back contacts waiting',
-        detail: 'High stale count suggests many residents were not home during the initial sweep. A dedicated revisit run could yield hidden sales.'
+        detail: 'High stale count suggests many residents were not home during the initial sweep. A dedicated revisit run could yield additional sales.'
       });
-    } else if (cr >= 0.12 && cov < 0.50) {
+    } else if (cr >= 0.12 && cov < 0.50 && d.worked >= 15) {
       recs.push({
         territory: t, priority: 'high',
         icon: '🟢',
         action: 'Double down — ' + pct(cr) + ' close rate with ' + pending + ' homes untouched',
-        detail: 'Above-average performance with significant runway remaining. Add more reps or extend hours here.'
+        detail: 'Above-average close rate with significant runway remaining. Add reps or extend hours here.'
       });
-    } else if (cr < 0.05 && d.worked >= 20) {
+    } else if (cr < 0.05 && d.worked >= 30) {
       recs.push({
         territory: t, priority: 'low',
         icon: '🟡',
         action: 'Review approach — only ' + pct(cr) + ' close rate after ' + d.worked + ' doors',
-        detail: 'Low close rate may indicate high competitor penetration or wrong rep-territory fit. Check competitor data.'
+        detail: 'Low close rate may indicate high competitor penetration or a rep-territory mismatch. Check competitor breakdown.'
       });
     } else if (cov < 0.20 && d.total > 50) {
       recs.push({
@@ -2963,17 +2990,23 @@ function renderDeployRecommendations() {
 // ── Shared territory aggregation ─────────────────────────
 function buildTerrMap() {
   var m = {};
+  // Normalize display names — store canonical (title-cased) name keyed by lowercase
+  var displayNames = {};
   addresses.forEach(function(a) {
-    var t = (a.territory || 'Unknown').trim();
-    if (!m[t]) m[t] = {
+    var raw        = (a.territory || 'Unknown').trim();
+    var normalized = raw.toLowerCase();              // key for grouping
+    var display    = displayNames[normalized] || raw; // keep first-seen capitalisation
+    displayNames[normalized] = display;
+
+    if (!m[normalized]) m[normalized] = {
+      _display: display,
       total: 0, worked: 0, pending: 0, sales: 0,
       mega: 0, gig: 0, nothome: 0,
       brightspeed: 0, incontract: 0, goback: 0,
       notinterested: 0, vacant: 0, business: 0,
-      // Existing customer count tracked separately for context
       existingCustomers: 0
     };
-    var d = m[t];
+    var d = m[normalized];
     var s = (a.status || 'pending').toLowerCase();
 
     // Track existing customers separately — they are NOT in the knockable universe
@@ -3363,7 +3396,13 @@ function pingNearbyAddresses() {
       var REP_STATUSES = ['mega','gig','nothome','brightspeed','incontract','notinterested','goback','vacant','business'];
       if (REP_STATUSES.indexOf(s) >= 0) {
         var key = (a.address + '|' + (a.city || '')).toLowerCase().trim();
-        dispositionMap[key] = { status: a.status, note: a.note || '', salesperson: a.salesperson || '', sale: a.sale || null };
+        dispositionMap[key] = {
+          status:      a.status,
+          note:        a.note        || '',
+          salesperson: a.salesperson || '',
+          sale:        a.sale        || null,
+          knockedAt:   a.knockedAt   || null   // ← preserve timestamp across GPS refreshes
+        };
       }
     });
     // Also hang on to manually added addresses so they survive the list rebuild
@@ -3390,10 +3429,11 @@ function pingNearbyAddresses() {
       // Restore any disposition the rep already logged for this address
       var key = (addr.address + '|' + (addr.city || '')).toLowerCase().trim();
       if (dispositionMap[key]) {
-        addr.status     = dispositionMap[key].status;
-        addr.note       = dispositionMap[key].note;
+        addr.status      = dispositionMap[key].status;
+        addr.note        = dispositionMap[key].note;
         addr.salesperson = dispositionMap[key].salesperson;
-        addr.sale       = dispositionMap[key].sale;
+        addr.sale        = dispositionMap[key].sale;
+        addr.knockedAt   = dispositionMap[key].knockedAt || addr.knockedAt || null;
       }
       return addr;
     });
