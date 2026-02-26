@@ -2315,7 +2315,7 @@ function renderStatusBars() {
   var counts = {};
   var worked = addresses.filter(function(a) {
     var s = (a.status || 'pending').toLowerCase();
-    return s !== 'pending' && s !== '';
+    return s !== 'pending' && s !== '' && s !== 'homes passed';
   });
 
   worked.forEach(function(a) {
@@ -2390,7 +2390,7 @@ function renderLeaderboard() {
     if (!isKnockable(a)) return;  // skip existing customers
     if (!repData[rep]) repData[rep] = { doors: 0, sales: 0 };
     var s = (a.status || 'pending').toLowerCase();
-    if (s !== 'pending' && s !== '') repData[rep].doors++;
+    if (s !== 'pending' && s !== '' && s !== 'homes passed') repData[rep].doors++;
     if (s === 'mega' || s === 'gig') repData[rep].sales++;
   });
 
@@ -2434,7 +2434,7 @@ function renderCoverageTab() {
     if (!terrMap[t]) terrMap[t] = { total: 0, worked: 0, sold: 0 };
     terrMap[t].total++;
     var s = (a.status || 'pending').toLowerCase();
-    if (s !== 'pending' && s !== '') terrMap[t].worked++;
+    if (s !== 'pending' && s !== '' && s !== 'homes passed') terrMap[t].worked++;
     if (s === 'mega' || s === 'gig') terrMap[t].sold++;
   });
 
@@ -2482,7 +2482,7 @@ function renderForecastTab() {
   var totalSold   = soldMega + soldGig;
   var worked      = knockable.filter(function(a){
     var s = (a.status||'pending').toLowerCase();
-    return s !== 'pending' && s !== '';
+    return s !== 'pending' && s !== '' && s !== 'homes passed';
   }).length;
   var pending     = knockable.filter(function(a){
     var s = (a.status||'pending').toLowerCase();
@@ -2535,7 +2535,7 @@ function renderForecastTab() {
     if (!terrMap[t]) terrMap[t] = { pending: 0, sold: 0, worked: 0 };
     var s = (a.status||'pending').toLowerCase();
     if (!s || s === 'pending') terrMap[t].pending++;
-    if (s !== 'pending' && s !== '') terrMap[t].worked++;
+    if (s !== 'pending' && s !== '' && s !== 'homes passed') terrMap[t].worked++;
     if (s === 'mega' || s === 'gig') terrMap[t].sold++;
   });
 
@@ -2951,7 +2951,7 @@ function buildTerrMap() {
 
     // Only knockable addresses count toward totals, coverage, and close rate
     d.total++;
-    if (!s || s === 'pending') { d.pending++; return; }
+    if (!s || s === 'pending' || s === 'homes passed') { d.pending++; return; }
     d.worked++;
     if (s === 'mega')            { d.mega++;          d.sales++; }
     else if (s === 'gig')        { d.gig++;           d.sales++; }
