@@ -210,12 +210,17 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
 }
 
 .pl-head {
-  padding: 12px 14px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .pl-title {
   font-size: 10px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 1px; color: var(--muted); font-family: 'Space Mono', monospace;
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px;
+  display: flex; align-items: center; gap: 8px;
 }
 .pl-badge {
   background: var(--bg); border: 1px solid var(--border); border-radius: 20px;
@@ -223,8 +228,8 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
 }
 .search-in {
   width: 100%; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 7px; padding: 7px 11px; font-size: 13px; color: var(--text);
-  font-family: 'Syne', sans-serif; outline: none;
+  border-radius: 7px; padding: 8px 11px; font-size: 13px; color: var(--text);
+  font-family: 'Syne', sans-serif; outline: none; box-sizing: border-box;
 }
 .search-in:focus { border-color: var(--accent); }
 
@@ -1917,37 +1922,71 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
    ══════════════════════════════════════════════════════════ */
 
 /* ── Sidebar mode buttons (Route / Follow-Up) ────────────── */
-.pl-title-row {
+.pl-mode-btns {
+  display: flex;
+  gap: 6px;
+}
+.pl-mode-btn {
+  flex: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-.pl-mode-btns { display: flex; gap: 5px; }
-.pl-mode-btn {
-  background: rgba(255,255,255,.05);
+  justify-content: center;
+  gap: 5px;
+  background: rgba(255,255,255,.04);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   color: var(--muted);
   font-family: 'Syne', sans-serif;
   font-weight: 700;
-  font-size: 10px;
-  padding: 4px 8px;
+  font-size: 11px;
+  padding: 7px 6px;
   cursor: pointer;
-  transition: all .15s;
-  white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s;
+  min-height: 36px;
+  position: relative;
 }
-.pl-mode-btn:hover { color: var(--text); border-color: var(--accent); }
+.pl-mode-btn:hover {
+  background: rgba(255,255,255,.07);
+  color: var(--text);
+  border-color: rgba(255,255,255,.2);
+}
 .pl-mode-btn.active {
-  background: rgba(0,86,150,.25);
-  border-color: rgba(0,86,150,.5);
-  color: var(--accent);
+  background: rgba(0,86,150,.2);
+  border-color: rgba(0,86,150,.55);
+  color: #60a5fa;
 }
-#stale-badge {
-  display: inline-block;
+.pl-mode-icon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+.pl-mode-label { white-space: nowrap; }
+
+/* Badge pill on Follow-Up button — shows stale count */
+.pl-mode-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #d97706;
+  color: #fff;
   font-size: 9px;
   font-family: 'Space Mono', monospace;
-  color: #d97706;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.pl-mode-count:empty { display: none; }
+
+/* Active state colors per mode */
+#btn-route-mode.active {
+  background: rgba(6,182,212,.15);
+  border-color: rgba(6,182,212,.45);
+  color: #22d3ee;
+}
+#btn-stale-mode.active {
+  background: rgba(217,119,6,.15);
+  border-color: rgba(217,119,6,.45);
+  color: #fbbf24;
 }
 
 /* Distance / age label on address rows */
@@ -1955,7 +1994,7 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   font-size: 9px;
   color: var(--accent);
   font-family: 'Space Mono', monospace;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 /* ── Territory Intel tab — shared ─────────────────────────── */

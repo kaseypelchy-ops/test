@@ -2658,12 +2658,13 @@ function getStaleAddresses() {
   });
 }
 
-// Updates the stale badge count on the Follow-Up button
+// Updates the stale count badge on the Follow-Up button
 function updateStaleBadge() {
   var el = document.getElementById('stale-badge');
   if (!el) return;
   var count = getStaleAddresses().length;
-  el.textContent = count > 0 ? count + ' ' : '';
+  // textContent drives the CSS :empty selector — clear when zero so badge hides
+  el.textContent = count > 0 ? String(count) : '';
 }
 
 // ──────────────────────────────────────────────────────────

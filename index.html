@@ -398,12 +398,20 @@
 
   <div id="panel-list">
     <div class="pl-head">
-      <div class="pl-title-row">
-        <div class="pl-title">Addresses <span class="pl-badge" id="addr-count">0</span></div>
-        <div class="pl-mode-btns">
-          <button class="pl-mode-btn" id="btn-route-mode" onclick="toggleRouteMode()" title="Sort by nearest first">🧭 Route</button>
-          <button class="pl-mode-btn" id="btn-stale-mode" onclick="toggleStaleMode()" title="Show follow-up queue">🔄 <span id="stale-badge"></span>Follow-Up</button>
-        </div>
+      <div class="pl-title">
+        Addresses
+        <span class="pl-badge" id="addr-count">0</span>
+      </div>
+      <div class="pl-mode-btns">
+        <button class="pl-mode-btn" id="btn-route-mode" onclick="toggleRouteMode()">
+          <span class="pl-mode-icon">🧭</span>
+          <span class="pl-mode-label">Route</span>
+        </button>
+        <button class="pl-mode-btn" id="btn-stale-mode" onclick="toggleStaleMode()">
+          <span class="pl-mode-icon">🔄</span>
+          <span class="pl-mode-label">Follow-Up</span>
+          <span class="pl-mode-count" id="stale-badge"></span>
+        </button>
       </div>
       <input class="search-in" id="addr-search" placeholder="🔍 Search addresses…" oninput="filterList(this.value)">
     </div>
