@@ -1818,9 +1818,9 @@ function sendData(payload) {
 //  STATS
 // ──────────────────────────────────────────────────────────
 function updateStats() {
-  // Total = knockable doors only (homes passed without active Zito service)
+  // Total = ALL homes passed (entire fiber footprint, including existing Zito customers)
+  document.getElementById('st-total').textContent = addresses.length;
   var knockable = addresses.filter(isKnockable);
-  document.getElementById('st-total').textContent = knockable.length;
   document.getElementById('st-sched').textContent = addresses.filter(function(a){ return a.status==='mega' || a.status==='gig'; }).length;
   document.getElementById('st-pend').textContent  = knockable.filter(function(a){
     var s = (a.status||'').toLowerCase();
