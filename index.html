@@ -29,93 +29,6 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css"/>
 <!-- App styles — bump ?v= whenever you update style.css so browsers fetch fresh -->
 <link rel="stylesheet" href="style.css">
-  <!-- ── New Feature Styles ─────────────────────────────── -->
-  <style>
-    /* ── Follow-up timestamp line ─────────────────────────── */
-    .ti-stale-time {
-      font-size: 10px;
-      color: #6b7280;
-      margin-top: 2px;
-      font-family: 'Space Mono', monospace;
-    }
-
-    /* ── Sound Toggle ─────────────────────────────────────── */
-    #btn-sound-toggle { min-width: 36px; padding: 0 8px; font-size: 16px; opacity: .7; transition: opacity .2s; }
-    #btn-sound-toggle.active { opacity: 1; color: #facc15; border-color: rgba(250,204,21,.4); }
-
-    /* ── Optimize Route button ────────────────────────────── */
-    #btn-optimize-route.active { background: rgba(0,86,150,.35); border-color: rgba(0,86,150,.7); color: #60a5fa; }
-    #btn-optimize-route.active .pl-mode-icon { animation: spin-once .4s ease; }
-    @keyframes spin-once { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-    /* ── Route stop number badges on map ─────────────────── */
-    .route-num-badge {
-      width: 22px; height: 22px; border-radius: 50%;
-      background: #005696; color: #fff;
-      font-size: 10px; font-weight: 800;
-      display: flex; align-items: center; justify-content: center;
-      border: 2.5px solid #fff;
-      box-shadow: 0 2px 6px rgba(0,0,0,.55);
-      font-family: 'Syne', sans-serif;
-      pointer-events: none;
-    }
-
-    /* ── Badge EOD button ─────────────────────────────────── */
-    .badge-eod-action { margin: 10px 0 0; }
-    .badge-eod-btn {
-      width: 100%; padding: 10px 0; border-radius: 10px;
-      background: rgba(0,86,150,.18); border: 1px solid rgba(0,86,150,.4);
-      color: #60a5fa; font-size: 13px; font-weight: 700;
-      cursor: pointer; transition: background .15s;
-    }
-    .badge-eod-btn:hover { background: rgba(0,86,150,.32); }
-
-    /* ── EOD Digest Modal ─────────────────────────────────── */
-    .eod-overlay {
-      position: fixed; inset: 0; z-index: 3000;
-      background: rgba(0,0,0,.72);
-      display: flex; align-items: center; justify-content: center;
-      opacity: 0; pointer-events: none;
-      transition: opacity .2s;
-    }
-    .eod-overlay.open { opacity: 1; pointer-events: all; }
-    .eod-box {
-      background: #161b22; border: 1px solid rgba(255,255,255,.1);
-      border-radius: 16px; padding: 24px; width: 92%; max-width: 520px;
-      max-height: 90vh; display: flex; flex-direction: column; gap: 14px;
-      box-shadow: 0 24px 60px rgba(0,0,0,.7);
-      font-family: 'Syne', sans-serif;
-    }
-    .eod-header { display: flex; align-items: center; justify-content: space-between; }
-    .eod-title  { font-size: 17px; font-weight: 800; color: #f0f6fc; }
-    .eod-close  { background: none; border: none; color: #8b949e; font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
-    .eod-close:hover { background: rgba(255,255,255,.08); color: #f0f6fc; }
-    .eod-to     { font-size: 12px; color: #8b949e; }
-    .eod-to strong { color: #60a5fa; }
-    .eod-body {
-      flex: 1; overflow-y: auto; background: #0d1117;
-      border: 1px solid rgba(255,255,255,.08); border-radius: 10px;
-      padding: 14px 16px; margin: 0;
-      font-family: 'Space Mono', monospace; font-size: 11px;
-      color: #c9d1d9; line-height: 1.7; white-space: pre-wrap;
-      max-height: 40vh;
-    }
-    .eod-actions { display: flex; gap: 10px; }
-    .btn-eod-email {
-      flex: 1; padding: 11px 0; border-radius: 10px;
-      background: #005696; border: none; color: #fff;
-      font-size: 13px; font-weight: 700; cursor: pointer;
-      transition: background .15s;
-    }
-    .btn-eod-email:hover { background: #0070c0; }
-    .btn-eod-copy {
-      padding: 11px 18px; border-radius: 10px;
-      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
-      color: #c9d1d9; font-size: 13px; font-weight: 700; cursor: pointer;
-      transition: background .15s;
-    }
-    .btn-eod-copy:hover { background: rgba(255,255,255,.12); }
-  </style>
 </head>
 <body>
 
@@ -236,7 +149,6 @@
     <div class="tb-stat">Pending: <strong id="st-pend">0</strong></div>
     <div class="ml-auto" style="display:flex;align-items:center;gap:8px;">
       <button id="btn-drop-pin-top" class="tb-btn" title="Drop a pin / add an address">📍 Drop Pin</button>
-      <button id="btn-sound-toggle" class="tb-btn tb-btn-icon" title="Sound OFF — click to enable" onclick="toggleSound()">🔇</button>
       <div id="tb-status-pill" class="is-offline" onclick="openBadge()" title="View my badge">
         <span class="status-dot"></span>
         <span id="tb-status-label">OFFLINE</span>
@@ -272,10 +184,6 @@
         <div class="badge-email-actions">
           <button class="badge-email-btn mega" onclick="emailCustomerOffer('mega')">Email Mega Offer</button>
           <button class="badge-email-btn gig" onclick="emailCustomerOffer('gig')">Email Gig Offer</button>
-        </div>
-
-        <div class="badge-eod-action">
-          <button class="badge-eod-btn" onclick="closeBadge();openEODDigest()">📊 Send EOD Report to Manager</button>
         </div>
 
         <div class="badge-divider"></div>
@@ -519,10 +427,6 @@
           <span class="pl-mode-icon">🧭</span>
           <span class="pl-mode-label">Route</span>
         </button>
-        <button class="pl-mode-btn" id="btn-optimize-route" onclick="optimizeRoute()" title="Compute optimal walking order (TSP nearest-neighbor)">
-          <span class="pl-mode-icon">🗺</span>
-          <span class="pl-mode-label">Optimize</span>
-        </button>
         <button class="pl-mode-btn" id="btn-stale-mode" onclick="toggleStaleMode()">
           <span class="pl-mode-icon">🔄</span>
           <span class="pl-mode-label">Follow-Up</span>
@@ -572,22 +476,6 @@
       <button class="btn-add-addr-submit" id="btn-new-addr-submit" onclick="submitNewAddress()" disabled>Add Address</button>
       <div id="add-addr-sending">
         <div class="add-addr-spinner"></div> Saving to Google Sheet&hellip;
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════ EOD DIGEST MODAL ═══════════════════ -->
-  <div id="eod-digest-modal" class="eod-overlay" onclick="if(event.target===this)closeEODDigest()">
-    <div class="eod-box">
-      <div class="eod-header">
-        <div class="eod-title">📊 End of Shift Report</div>
-        <button class="eod-close" onclick="closeEODDigest()">✕</button>
-      </div>
-      <div class="eod-to">To: <strong id="eod-digest-to"></strong></div>
-      <pre id="eod-digest-body" class="eod-body"></pre>
-      <div class="eod-actions">
-        <button class="btn-eod-email" onclick="sendEODEmail()">📬 Email to Manager</button>
-        <button class="btn-eod-copy"  onclick="copyEODToClipboard()">📋 Copy</button>
       </div>
     </div>
   </div>

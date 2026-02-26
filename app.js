@@ -1319,12 +1319,7 @@ function openForm(id) {
   document.body.classList.add('form-open');
 
   if (addr.lat && addr.lng && mapObj) {
-    // Zoom to street level so the rep can clearly see the house on satellite view.
-    // flyTo animates both position and zoom smoothly in one move.
-    // If already at zoom 17+, just pan so we don't zoom in further unnecessarily.
-    var currentZoom = mapObj.getZoom();
-    var targetZoom  = Math.max(currentZoom, 18);
-    mapObj.flyTo([addr.lat, addr.lng], targetZoom, { animate: true, duration: 0.6 });
+    mapObj.panTo([addr.lat, addr.lng], { animate: true });
   }
 
   buildList();
@@ -1846,7 +1841,7 @@ function updateStats() {
 // ──────────────────────────────────────────────────────────
 //  MANAGER — Kasey Pelchy only
 // ──────────────────────────────────────────────────────────
-var MANAGER_NAMES  = ['kasey pelchy']; // ← add more names here, all lowercase
+var MANAGER_NAMES  = ['kasey pelchy', 'james rigas', 'chris ruding']; // ← add more names here, all lowercase
 var heartbeatTimer = null;
 var mgrAutoRefresh = null;
 
