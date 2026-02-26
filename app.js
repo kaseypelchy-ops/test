@@ -2458,42 +2458,36 @@ function renderCoverageTab() {
   var el = document.getElementById('cov-territory-bars');
   if (!el) return;
 
-  // Group knockable addresses by territory — normalize names to prevent case-split buckets
-  var terrMap    = {};
-  var displayMap = {};
-  addresses.forEach(function(a) {
-    if (!isKnockable(a)) return;
-    var raw        = (a.territory || 'Unknown').trim();
-    var key        = raw.toLowerCase();              // normalized group key
-    displayMap[key] = displayMap[key] || raw;        // keep first-seen capitalisation
-    if (!terrMap[key]) terrMap[key] = { total: 0, worked: 0, sold: 0 };
-    terrMap[key].total++;
-    var s = (a.status || 'pending').toLowerCase();
-    if (s !== 'pending' && s !== '') terrMap[key].worked++;
-    if (s === 'mega' || s === 'gig') terrMap[key].sold++;
-  });
+  // Use buildTerrMap which now tracks footprint (all addresses) and
+  // dispositioned (rep-knocked) separately from the knockable-only totals.
+  var terrMap    = buildTerrMap();
+  var keys       = Object.keys(terrMap).sort();
 
-  var keys = Object.keys(terrMap).sort();
   if (keys.length === 0) {
     el.innerHTML = '<div style="text-align:center;padding:16px;font-size:11px;color:var(--muted);">No territory data available</div>';
     return;
   }
 
   el.innerHTML = keys.map(function(key) {
-    var d       = terrMap[key];
-    var name    = displayMap[key] || key;
-    var covPct  = d.total > 0 ? d.worked / d.total : 0;
-    var soldPct = d.total > 0 ? d.sold   / d.total : 0;
+    var d    = terrMap[key];
+    var name = d._display || key;
+
+    // Coverage = rep-dispositioned / full footprint (homes passed + active + knockable)
+    var covPct  = d.footprint > 0 ? d.dispositioned / d.footprint : 0;
+    // Sales share = sales / footprint (for the green sold portion of the bar)
+    var soldPct = d.footprint > 0 ? d.sales / d.footprint : 0;
     var soldW   = (soldPct * 100).toFixed(1);
-    var restW   = ((covPct - soldPct) * 100).toFixed(1);
-    var cr      = d.worked > 0 ? Math.round((d.sold / d.worked) * 100) : 0;
+    var restW   = Math.max(((covPct - soldPct) * 100), 0).toFixed(1);
+    var cr      = d.worked > 0 ? Math.round((d.sales / d.worked) * 100) : 0;
 
     return '<div class="cov-terr-row">' +
       '<div class="cov-terr-header">' +
         '<span class="cov-terr-name">' + escHtml(name) + '</span>' +
         '<span class="cov-terr-stats">' +
-          d.worked + '/' + d.total + ' worked · ' + pct(covPct) +
-          ' coverage · ' + d.sold + ' sales' +
+          d.dispositioned + '/' + d.footprint + ' knocked' +
+          ' · ' + pct(covPct) + ' coverage' +
+          ' · ' + d.sales + ' sales' +
+          (d.existingCustomers ? ' · ' + d.existingCustomers + ' active' : '') +
           (d.worked >= 5 ? ' · ' + cr + '% CR' : '') +
         '</span>' +
       '</div>' +
@@ -2988,19 +2982,33 @@ function renderDeployRecommendations() {
 }
 
 // ── Shared territory aggregation ─────────────────────────
+// Field definitions:
+//   footprint     — ALL addresses in the territory (homes passed + active + knockable)
+//                   used as the coverage denominator
+//   dispositioned — addresses a rep physically knocked and logged (coverage numerator)
+//   total         — knockable addresses only (for close rate, forecast, saturation)
+//   worked        — knockable addresses a rep logged (subset of total)
+//   pending       — knockable addresses not yet touched
+//   sales         — mega + gig combined
 function buildTerrMap() {
+  var REP_STATUSES = ['mega','gig','nothome','brightspeed','incontract','notinterested','goback','vacant','business'];
+
   var m = {};
-  // Normalize display names — store canonical (title-cased) name keyed by lowercase
   var displayNames = {};
   addresses.forEach(function(a) {
     var raw        = (a.territory || 'Unknown').trim();
-    var normalized = raw.toLowerCase();              // key for grouping
-    var display    = displayNames[normalized] || raw; // keep first-seen capitalisation
+    var normalized = raw.toLowerCase();
+    var display    = displayNames[normalized] || raw;
     displayNames[normalized] = display;
 
     if (!m[normalized]) m[normalized] = {
-      _display: display,
-      total: 0, worked: 0, pending: 0, sales: 0,
+      _display:      display,
+      footprint:     0,   // ALL addresses — coverage denominator
+      dispositioned: 0,   // rep-knocked   — coverage numerator
+      total:         0,   // knockable only — for close rate / forecast / saturation
+      worked:        0,
+      pending:       0,
+      sales:         0,
       mega: 0, gig: 0, nothome: 0,
       brightspeed: 0, incontract: 0, goback: 0,
       notinterested: 0, vacant: 0, business: 0,
@@ -3009,25 +3017,34 @@ function buildTerrMap() {
     var d = m[normalized];
     var s = (a.status || 'pending').toLowerCase();
 
-    // Track existing customers separately — they are NOT in the knockable universe
+    // Every address — active customer, homes passed, or knockable — counts toward footprint
+    d.footprint++;
+
+    // Rep-set dispositions count as coverage (rep physically knocked and logged it)
+    if (REP_STATUSES.indexOf(s) >= 0) {
+      d.dispositioned++;
+    }
+
+    // Non-knockable addresses stop here — they contribute to footprint/coverage
+    // but are NOT in the knockable universe used for close rate / forecast
     if (!isKnockable(a)) {
       d.existingCustomers++;
       return;
     }
 
-    // Only knockable addresses count toward totals, coverage, and close rate
+    // Knockable universe — saturation, close rate, forecast
     d.total++;
-    if (!s || s === 'pending') { d.pending++; return; }
+    if (!s || s === 'pending' || s === 'homes passed') { d.pending++; return; }
     d.worked++;
-    if (s === 'mega')            { d.mega++;          d.sales++; }
-    else if (s === 'gig')        { d.gig++;           d.sales++; }
-    else if (s === 'nothome')      d.nothome++;
-    else if (s === 'brightspeed')  d.brightspeed++;
-    else if (s === 'incontract')   d.incontract++;
-    else if (s === 'goback')       d.goback++;
+    if (s === 'mega')             { d.mega++;          d.sales++; }
+    else if (s === 'gig')         { d.gig++;           d.sales++; }
+    else if (s === 'nothome')       d.nothome++;
+    else if (s === 'brightspeed')   d.brightspeed++;
+    else if (s === 'incontract')    d.incontract++;
+    else if (s === 'goback')        d.goback++;
     else if (s === 'notinterested') d.notinterested++;
-    else if (s === 'vacant')       d.vacant++;
-    else if (s === 'business')     d.business++;
+    else if (s === 'vacant')        d.vacant++;
+    else if (s === 'business')      d.business++;
   });
   return m;
 }
