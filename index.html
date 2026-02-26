@@ -396,6 +396,26 @@
     </div>
   </div>
 
+  <!-- ═══════════════════ GPS PERMISSION PROMPT ═══════════════════ -->
+  <div id="gps-prompt" class="gps-prompt-overlay">
+    <div class="gps-prompt-box">
+      <div class="gps-prompt-icon">📍</div>
+      <div class="gps-prompt-title">Enable Location</div>
+      <div class="gps-prompt-body">
+        FieldOS uses your location to:<br><br>
+        <span class="gps-feat">🧭 <strong>Route Mode</strong> — sort addresses nearest-first as you walk</span>
+        <span class="gps-feat">📡 <strong>Territory loading</strong> — auto-load homes near you</span>
+        <span class="gps-feat">🔄 <strong>Follow-Up Queue</strong> — show distance to each callback</span>
+      </div>
+      <div class="gps-prompt-sub">Your location is never stored or shared. It stays on your device.</div>
+      <button class="gps-btn-allow" onclick="requestGPS()">Allow Location Access</button>
+      <button class="gps-btn-skip"  onclick="dismissGPSPrompt()">Not Now</button>
+    </div>
+  </div>
+
+  <!-- GPS status banner (shows briefly after grant/deny) -->
+  <div id="gps-banner" class="gps-banner"></div>
+
   <div id="panel-list">
     <div class="pl-head">
       <div class="pl-title">

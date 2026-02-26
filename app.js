@@ -479,6 +479,8 @@ function launchApp() {
     startPolling();
     maybeAutoCollapse();
     initBadge();
+    // Ask for GPS permission right after launch so Route Mode is ready to go
+    startGPSPing();
     // Managers land on the team dashboard automatically
     if (isManager()) {
       setTimeout(function(){ openManagerPanel(); }, 600);
@@ -2616,9 +2618,10 @@ function toggleRouteMode() {
   if (staleBtn) staleBtn.classList.remove('active');
 
   if (routeMode && !lastGPS) {
-    toast('⚠ GPS not available — enable location for Route Mode', 't-err');
     routeMode = false;
     if (btn) btn.classList.remove('active');
+    // Re-show the GPS prompt so they can grant permission on the spot
+    showGPSPrompt();
     return;
   }
 
@@ -3088,31 +3091,210 @@ function closeBadge() {
   document.getElementById('badge-modal').classList.remove('open');
 }
 
-var lastGPS = null;
-var gpsWatchId = null;
+var lastGPS       = null;
+var gpsWatchId    = null;
+var repMarker     = null;   // Leaflet marker showing the rep's live position
+var repAccCircle  = null;   // Accuracy radius circle
 
-function startGPSPing() {
-  if (isManager()) return;       // managers see all territories — no GPS filtering
+// ── GPS Permission & Init ─────────────────────────────────
+
+function showGPSPrompt() {
+  var el = document.getElementById('gps-prompt');
+  if (el) el.classList.add('open');
+}
+
+function dismissGPSPrompt(reason) {
+  var el = document.getElementById('gps-prompt');
+  if (el) el.classList.remove('open');
+  if (reason) showGPSBanner(reason.text, reason.type);
+}
+
+function showGPSBanner(msg, type) {
+  var el = document.getElementById('gps-banner');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'gps-banner ' + (type || 'ok');
+  el.classList.add('show');
+  setTimeout(function() { el.classList.remove('show'); }, 3500);
+}
+
+// ── Rep position marker ──────────────────────────────────
+function updateRepMarker(lat, lng, acc) {
+  if (!mapObj) return;
+
+  // Build initials from repName
+  var parts    = (repName || 'ME').trim().split(/\s+/);
+  var initials = parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : (repName || 'ME').slice(0, 2).toUpperCase();
+
+  // SVG icon: outer pulse ring + solid dot + initials label
+  var markerHTML = [
+    '<div class="rep-marker-wrap">',
+      '<div class="rep-marker-pulse"></div>',
+      '<div class="rep-marker-dot">',
+        '<span class="rep-marker-initials">' + initials + '</span>',
+      '</div>',
+    '</div>'
+  ].join('');
+
+  var icon = L.divIcon({
+    className: '',
+    html: markerHTML,
+    iconSize:   [44, 44],
+    iconAnchor: [22, 22],
+    popupAnchor:[0, -22]
+  });
+
+  if (repMarker) {
+    // Smoothly move existing marker
+    repMarker.setLatLng([lat, lng]);
+    repMarker.setIcon(icon); // refreshes initials if repName changed
+  } else {
+    // First time — create marker on a custom pane so it floats above all address pins
+    if (!mapObj.getPane('repPane')) {
+      mapObj.createPane('repPane');
+      mapObj.getPane('repPane').style.zIndex = 650; // above markerPane (600)
+      mapObj.getPane('repPane').style.pointerEvents = 'none';
+    }
+    repMarker = L.marker([lat, lng], {
+      icon:        icon,
+      pane:        'repPane',
+      interactive: false,   // don't intercept taps meant for address pins
+      zIndexOffset: 1000
+    }).addTo(mapObj);
+
+    repMarker.bindTooltip(
+      '<strong>' + (repName || 'Rep') + '</strong><br><span style="font-size:10px;color:#8b949e">Your location</span>',
+      { permanent: false, direction: 'top', className: 'rep-tooltip' }
+    );
+  }
+
+  // Update accuracy circle
+  if (acc && acc > 0 && acc < 500) {
+    if (repAccCircle) {
+      repAccCircle.setLatLng([lat, lng]).setRadius(acc);
+    } else {
+      repAccCircle = L.circle([lat, lng], {
+        radius:      acc,
+        color:       '#3b82f6',
+        fillColor:   '#3b82f6',
+        fillOpacity: 0.06,
+        opacity:     0.25,
+        weight:      1,
+        interactive: false
+      }).addTo(mapObj);
+    }
+  } else if (repAccCircle) {
+    mapObj.removeLayer(repAccCircle);
+    repAccCircle = null;
+  }
+}
+
+function removeRepMarker() {
+  if (repMarker)    { mapObj.removeLayer(repMarker);    repMarker    = null; }
+  if (repAccCircle) { mapObj.removeLayer(repAccCircle); repAccCircle = null; }
+}
+
+function requestGPS() {
+  dismissGPSPrompt(); // close the modal first
+
+  if (!navigator.geolocation) {
+    showGPSBanner('⚠ GPS not supported on this device', 'err');
+    return;
+  }
+
+  // One-shot getCurrentPosition to trigger the browser permission dialog.
+  // If the user grants it, we immediately kick off the persistent watchPosition.
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      // Permission granted — seed lastGPS right away so Route Mode works immediately
+      lastGPS = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        acc: pos.coords.accuracy || null,
+        ts: Date.now()
+      };
+      updateRepMarker(lastGPS.lat, lastGPS.lng, lastGPS.acc);
+      showGPSBanner('📍 Location enabled — Route Mode available', 'ok');
+      _startGPSWatch_();  // begin continuous watch
+    },
+    function(err) {
+      var msg = err.code === 1
+        ? '📍 Location denied — Route Mode unavailable. Enable in browser settings.'
+        : '📍 Could not get location — try again later.';
+      showGPSBanner(msg, 'warn');
+      _markRouteButtonUnavailable_();
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+function _markRouteButtonUnavailable_() {
+  var btn = document.getElementById('btn-route-mode');
+  if (btn) btn.classList.add('no-gps');
+}
+
+function _startGPSWatch_() {
+  if (gpsWatchId !== null) return;  // already watching
   if (!navigator.geolocation) return;
 
-  // Watch position so it updates as they move
-  gpsWatchId = navigator.geolocation.watchPosition(function(pos){
+  gpsWatchId = navigator.geolocation.watchPosition(function(pos) {
     lastGPS = {
       lat: pos.coords.latitude,
       lng: pos.coords.longitude,
       acc: pos.coords.accuracy || null,
       ts: Date.now()
     };
-
-    // Send to server every update (or throttle if you want)
+    // Remove no-gps class if it was set (e.g. permission granted after initial deny)
+    var btn = document.getElementById('btn-route-mode');
+    if (btn) btn.classList.remove('no-gps');
+    updateRepMarker(lastGPS.lat, lastGPS.lng, lastGPS.acc);
     pingNearbyAddresses();
-  }, function(err){
-    console.warn('Geolocation error:', err);
+  }, function(err) {
+    console.warn('Geolocation watch error:', err);
   }, {
     enableHighAccuracy: true,
     maximumAge: 10000,
     timeout: 10000
   });
+}
+
+// Public entry called from launchApp — shows the in-app prompt first
+function startGPSPing() {
+  if (isManager()) return;  // managers don't use GPS
+  if (!navigator.geolocation) {
+    _markRouteButtonUnavailable_();
+    return;
+  }
+  // Check if permission was already granted (won't re-prompt if so)
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'geolocation' }).then(function(result) {
+      if (result.state === 'granted') {
+        // Already have permission — skip the prompt and go straight to watching
+        _startGPSWatch_();
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          lastGPS = { lat: pos.coords.latitude, lng: pos.coords.longitude,
+                      acc: pos.coords.accuracy || null, ts: Date.now() };
+          updateRepMarker(lastGPS.lat, lastGPS.lng, lastGPS.acc);
+          showGPSBanner('📍 Location active', 'ok');
+        }, function(){});
+      } else if (result.state === 'denied') {
+        // Already denied — mark button unavailable, no point prompting
+        _markRouteButtonUnavailable_();
+        showGPSBanner('📍 Location blocked — enable in browser settings for Route Mode', 'warn');
+      } else {
+        // 'prompt' state — show our friendly in-app prompt first
+        showGPSPrompt();
+      }
+    }).catch(function() {
+      // permissions API not supported — show prompt anyway
+      showGPSPrompt();
+    });
+  } else {
+    // No permissions API (older browsers) — show our prompt
+    showGPSPrompt();
+  }
 }
 
 function pingNearbyAddresses() {
@@ -3201,8 +3383,9 @@ function pingNearbyAddresses() {
     buildList();
     refreshMapMarkers();
 
-    // Optional: keep map centered on rep
-    if (mapObj) mapObj.setView([lastGPS.lat, lastGPS.lng], 17);
+    // Don't forcibly re-center the map on every GPS update — too disruptive
+    // while the rep is interacting with the address list or form.
+    // The rep marker updates in place via updateRepMarker().
   })
   .catch(function(e){
     console.warn('rep_location failed', e);
