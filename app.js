@@ -48,6 +48,26 @@ var COLORS = {
   business:      '#6366f1'
 };
 var COLOR_ACTIVE = '#facc15';
+
+// ── Knockable door classification ─────────────────────────
+// An address is "knockable" if it is NOT an existing Zito customer.
+// Existing customers arrive from the sheet with activeCount = 'active',
+// 'existing', or 'customer' — they show as ⚡ bolt icons and must be
+// excluded from coverage, close rate, pending, and forecast calculations.
+// Everything else (homes passed with no service, empty activeCount) is knockable.
+function isKnockable(a) {
+  var ac = (a.activeCount || '').toLowerCase().trim();
+  var s  = (a.status      || '').toLowerCase().trim();
+  if (ac === 'active' || ac === 'existing' || ac === 'customer') return false;
+  if (s  === 'active') return false;
+  return true;
+}
+
+// Count knockable addresses — use this everywhere instead of addresses.length
+// when you need the size of the actual sales universe.
+function knockableCount() {
+  return addresses.filter(isKnockable).length;
+}
 var COLOR_PASSED = '#6b7280';
 
 var colors = {
@@ -1796,9 +1816,11 @@ function sendData(payload) {
 //  STATS
 // ──────────────────────────────────────────────────────────
 function updateStats() {
-  document.getElementById('st-total').textContent = addresses.length;
+  // Total = knockable doors only (homes passed without active Zito service)
+  var knockable = addresses.filter(isKnockable);
+  document.getElementById('st-total').textContent = knockable.length;
   document.getElementById('st-sched').textContent = addresses.filter(function(a){ return a.status==='mega' || a.status==='gig'; }).length;
-  document.getElementById('st-pend').textContent  = addresses.filter(function(a){
+  document.getElementById('st-pend').textContent  = knockable.filter(function(a){
     var s = (a.status||'').toLowerCase();
     return !s || s === 'pending' || s === 'homes passed';
   }).length;
@@ -1843,6 +1865,7 @@ function sendHeartbeat(statusOverride) {
     return a.status === 'gig'  && ((a.salesperson || '').toLowerCase() === rn);
   }).length;
   var doorsWorked = addresses.filter(function(a){
+    if (!isKnockable(a)) return false;
     var st = String(a.status||'').toLowerCase();
     if (!st || st === 'pending') return false;
     return ((a.salesperson || '').toLowerCase() === rn);
@@ -2324,11 +2347,13 @@ function renderCompetitor() {
   var el = document.getElementById('ana-competitor');
   if (!el) return;
 
-  var total     = addresses.length;
-  var bspeed    = addresses.filter(function(a){ return a.status === 'brightspeed'; }).length;
-  var incon     = addresses.filter(function(a){ return a.status === 'incontract'; }).length;
-  var sold      = addresses.filter(function(a){ return a.status === 'mega' || a.status === 'gig'; }).length;
-  var avail     = addresses.filter(function(a){
+  // Only count knockable homes — existing customers are a separate universe
+  var knockable = addresses.filter(isKnockable);
+  var total     = knockable.length;
+  var bspeed    = knockable.filter(function(a){ return a.status === 'brightspeed'; }).length;
+  var incon     = knockable.filter(function(a){ return a.status === 'incontract'; }).length;
+  var sold      = knockable.filter(function(a){ return a.status === 'mega' || a.status === 'gig'; }).length;
+  var avail     = knockable.filter(function(a){
     var s = (a.status || 'pending').toLowerCase();
     return !s || s === 'pending' || s === 'nothome' || s === 'goback' || s === 'nocontact';
   }).length;
@@ -2355,11 +2380,12 @@ function renderLeaderboard() {
   var el = document.getElementById('ana-leaderboard');
   if (!el) return;
 
-  // Aggregate per rep from addresses array
+  // Aggregate per rep — knockable addresses only
   var repData = {};
   addresses.forEach(function(a) {
     var rep = (a.salesperson || '').trim();
     if (!rep) return;
+    if (!isKnockable(a)) return;  // skip existing customers
     if (!repData[rep]) repData[rep] = { doors: 0, sales: 0 };
     var s = (a.status || 'pending').toLowerCase();
     if (s !== 'pending' && s !== '') repData[rep].doors++;
@@ -2398,9 +2424,10 @@ function renderCoverageTab() {
   var el = document.getElementById('cov-territory-bars');
   if (!el) return;
 
-  // Group addresses by territory
+  // Group knockable addresses by territory — existing customers excluded
   var terrMap = {};
   addresses.forEach(function(a) {
+    if (!isKnockable(a)) return;
     var t = (a.territory || 'Unknown').trim();
     if (!terrMap[t]) terrMap[t] = { total: 0, worked: 0, sold: 0 };
     terrMap[t].total++;
@@ -2445,16 +2472,17 @@ var FC_MONTHLY = {
 };
 
 function renderForecastTab() {
-  // Current actuals
-  var totalHomes  = addresses.length;
-  var soldMega    = addresses.filter(function(a){ return a.status === 'mega'; }).length;
-  var soldGig     = addresses.filter(function(a){ return a.status === 'gig'; }).length;
+  // Current actuals — knockable doors only (excludes existing Zito customers)
+  var knockable   = addresses.filter(isKnockable);
+  var totalHomes  = knockable.length;
+  var soldMega    = knockable.filter(function(a){ return a.status === 'mega'; }).length;
+  var soldGig     = knockable.filter(function(a){ return a.status === 'gig'; }).length;
   var totalSold   = soldMega + soldGig;
-  var worked      = addresses.filter(function(a){
+  var worked      = knockable.filter(function(a){
     var s = (a.status||'pending').toLowerCase();
     return s !== 'pending' && s !== '';
   }).length;
-  var pending     = addresses.filter(function(a){
+  var pending     = knockable.filter(function(a){
     var s = (a.status||'pending').toLowerCase();
     return !s || s === 'pending';
   }).length;
@@ -2497,9 +2525,10 @@ function renderForecastTab() {
     }).join('');
   }
 
-  // Render territory breakdown
+  // Render territory breakdown — knockable doors only
   var terrMap = {};
   addresses.forEach(function(a) {
+    if (!isKnockable(a)) return;
     var t = (a.territory || 'Unknown').trim();
     if (!terrMap[t]) terrMap[t] = { pending: 0, sold: 0, worked: 0 };
     var s = (a.status||'pending').toLowerCase();
@@ -2903,22 +2932,32 @@ function buildTerrMap() {
       total: 0, worked: 0, pending: 0, sales: 0,
       mega: 0, gig: 0, nothome: 0,
       brightspeed: 0, incontract: 0, goback: 0,
-      notinterested: 0, vacant: 0, business: 0
+      notinterested: 0, vacant: 0, business: 0,
+      // Existing customer count tracked separately for context
+      existingCustomers: 0
     };
     var d = m[t];
     var s = (a.status || 'pending').toLowerCase();
+
+    // Track existing customers separately — they are NOT in the knockable universe
+    if (!isKnockable(a)) {
+      d.existingCustomers++;
+      return;
+    }
+
+    // Only knockable addresses count toward totals, coverage, and close rate
     d.total++;
     if (!s || s === 'pending') { d.pending++; return; }
     d.worked++;
-    if (s === 'mega')          { d.mega++;          d.sales++; }
-    else if (s === 'gig')      { d.gig++;           d.sales++; }
-    else if (s === 'nothome')    d.nothome++;
-    else if (s === 'brightspeed') d.brightspeed++;
-    else if (s === 'incontract')  d.incontract++;
-    else if (s === 'goback')      d.goback++;
+    if (s === 'mega')            { d.mega++;          d.sales++; }
+    else if (s === 'gig')        { d.gig++;           d.sales++; }
+    else if (s === 'nothome')      d.nothome++;
+    else if (s === 'brightspeed')  d.brightspeed++;
+    else if (s === 'incontract')   d.incontract++;
+    else if (s === 'goback')       d.goback++;
     else if (s === 'notinterested') d.notinterested++;
-    else if (s === 'vacant')      d.vacant++;
-    else if (s === 'business')    d.business++;
+    else if (s === 'vacant')       d.vacant++;
+    else if (s === 'business')     d.business++;
   });
   return m;
 }
