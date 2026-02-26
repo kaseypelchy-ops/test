@@ -1871,7 +1871,7 @@ function updateStats() {
 // ──────────────────────────────────────────────────────────
 //  MANAGER — Kasey Pelchy only
 // ──────────────────────────────────────────────────────────
-var MANAGER_NAMES  = ['kasey pelchy']; // ← add more names here, all lowercase
+var MANAGER_NAMES  = ['kasey pelchy', 'chris ruding', 'james rigas']; // ← add more names here, all lowercase
 var heartbeatTimer = null;
 var mgrAutoRefresh = null;
 
