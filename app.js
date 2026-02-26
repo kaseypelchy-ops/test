@@ -1061,14 +1061,50 @@ var TAG_HTML  = {
 })();
 
 function buildList(filter) {
-  var list = filter
-    ? addresses.filter(function(a) {
-        var q = filter.toLowerCase();
+  // Update stale badge every time list rebuilds
+  updateStaleBadge();
+
+  var list;
+
+  // Stale mode: show only Not Home / Go Back addresses, oldest first
+  if (staleMode) {
+    list = getStaleAddresses();
+    if (filter) {
+      var q = filter.toLowerCase();
+      list = list.filter(function(a) {
+        return a.address.toLowerCase().indexOf(q) >= 0 ||
+               (a.city && a.city.toLowerCase().indexOf(q) >= 0);
+      });
+    }
+  // Route mode: sort all addresses by distance from current GPS, nearest first
+  } else if (routeMode && lastGPS) {
+    list = addresses.slice().sort(function(a, b) {
+      var distA = (a.lat && a.lng)
+        ? haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng)
+        : 9999;
+      var distB = (b.lat && b.lng)
+        ? haversineMiles(lastGPS.lat, lastGPS.lng, b.lat, b.lng)
+        : 9999;
+      return distA - distB;
+    });
+    if (filter) {
+      var q = filter.toLowerCase();
+      list = list.filter(function(a) {
         return a.address.toLowerCase().indexOf(q) >= 0 ||
                (a.city && a.city.toLowerCase().indexOf(q) >= 0) ||
                (a.zip  && a.zip.indexOf(q) >= 0);
-      })
-    : addresses;
+      });
+    }
+  } else {
+    list = filter
+      ? addresses.filter(function(a) {
+          var q = filter.toLowerCase();
+          return a.address.toLowerCase().indexOf(q) >= 0 ||
+                 (a.city && a.city.toLowerCase().indexOf(q) >= 0) ||
+                 (a.zip  && a.zip.indexOf(q) >= 0);
+        })
+      : addresses;
+  }
 
   document.getElementById('addr-count').textContent = addresses.length;
 
@@ -1089,12 +1125,28 @@ function buildList(filter) {
     var noteLine = (a.note && a.note.trim())
       ? '<div class="ar-note">' + escHtml(a.note.trim()) + '</div>'
       : '';
+
+    // Route mode: show distance from current GPS position
+    var modeLine = '';
+    if (routeMode && lastGPS && a.lat && a.lng) {
+      var mi = haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng);
+      var distStr = mi < 0.1 ? 'Nearby' : mi.toFixed(2) + ' mi';
+      modeLine = '<div class="ar-dist">📍 ' + distStr + '</div>';
+    } else if (staleMode && a.knockedAt) {
+      var hrs = (Date.now() - new Date(a.knockedAt).getTime()) / 3600000;
+      var ageStr = hrs < 1 ? Math.round(hrs * 60) + 'm ago'
+                 : hrs < 24 ? hrs.toFixed(1) + 'h ago'
+                 : Math.floor(hrs / 24) + 'd ago';
+      modeLine = '<div class="ar-dist" style="color:#d97706">⏱ ' + ageStr + '</div>';
+    }
+
     return '<div class="addr-row' + selC + '" data-id="' + a.id + '">' +
       '<div class="ar-dot">' + icon + '</div>' +
       '<div class="ar-info">' +
         '<div class="ar-st">'  + escHtml(a.address) + '</div>' +
         '<div class="ar-sub">' + escHtml(sub)        + '</div>' +
         noteLine +
+        modeLine +
       '</div>' + tag + '</div>';
   }).join('');
 
@@ -1996,6 +2048,7 @@ function switchMgrTab(tab, btn) {
   if (tab === 'analytics') renderAnalyticsTab();
   if (tab === 'coverage')  renderCoverageTab();
   if (tab === 'forecast')  renderForecastTab();
+  if (tab === 'territory') renderTerritoryTab();
 }
 function refreshManagerPanel() {
   var btn = document.getElementById('mgr-refresh-btn');
@@ -2498,6 +2551,380 @@ function renderForecastTab() {
       '</div>';
     }).join('');
   }
+}
+
+// ══════════════════════════════════════════════════════════
+//  TIER 3 — TERRITORY INTELLIGENCE
+// ══════════════════════════════════════════════════════════
+
+// ── Haversine distance in miles (client-side) ─────────────
+function haversineMiles(lat1, lng1, lat2, lng2) {
+  var R    = 3958.76;
+  var dLat = (lat2 - lat1) * Math.PI / 180;
+  var dLng = (lng2 - lng1) * Math.PI / 180;
+  var a    = Math.sin(dLat/2) * Math.sin(dLat/2) +
+             Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+             Math.sin(dLng/2) * Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ──────────────────────────────────────────────────────────
+//  ROUTE MODE
+//  Sorts the sidebar list nearest-first from the rep's current
+//  GPS position so they walk an efficient path door to door.
+// ──────────────────────────────────────────────────────────
+var routeMode = false;
+var staleMode = false;
+var STALE_HOURS = 2; // hours before a Not Home / Go Back is considered stale
+
+function toggleRouteMode() {
+  routeMode = !routeMode;
+  if (routeMode) staleMode = false;  // mutually exclusive
+
+  var btn     = document.getElementById('btn-route-mode');
+  var staleBtn = document.getElementById('btn-stale-mode');
+  if (btn)     btn.classList.toggle('active', routeMode);
+  if (staleBtn) staleBtn.classList.remove('active');
+
+  if (routeMode && !lastGPS) {
+    toast('⚠ GPS not available — enable location for Route Mode', 't-err');
+    routeMode = false;
+    if (btn) btn.classList.remove('active');
+    return;
+  }
+
+  buildList();
+  toast(routeMode ? '🧭 Route Mode ON — sorted nearest first' : '🧭 Route Mode OFF', 't-info');
+}
+
+function toggleStaleMode() {
+  staleMode = !staleMode;
+  if (staleMode) routeMode = false;  // mutually exclusive
+
+  var btn      = document.getElementById('btn-stale-mode');
+  var routeBtn = document.getElementById('btn-route-mode');
+  if (btn)      btn.classList.toggle('active', staleMode);
+  if (routeBtn) routeBtn.classList.remove('active');
+
+  buildList();
+  toast(staleMode ? '🔄 Follow-Up Mode ON — showing stale contacts' : '🔄 Follow-Up Mode OFF', 't-info');
+}
+
+// Returns the follow-up queue: Not Home or Go Back Later addresses
+// sorted by how long since they were knocked (oldest first so rep revisits them)
+function getStaleAddresses() {
+  var now = Date.now();
+  return addresses.filter(function(a) {
+    var s = (a.status || '').toLowerCase();
+    if (s !== 'nothome' && s !== 'goback') return false;
+    // Include anything without a knockedAt — we don't know when it was last tried
+    if (!a.knockedAt) return true;
+    var hrs = (now - new Date(a.knockedAt).getTime()) / 3600000;
+    return hrs >= STALE_HOURS;
+  }).sort(function(a, b) {
+    // Oldest knockedAt first; nulls go to top (unknown = assume old)
+    var ta = a.knockedAt ? new Date(a.knockedAt).getTime() : 0;
+    var tb = b.knockedAt ? new Date(b.knockedAt).getTime() : 0;
+    return ta - tb;
+  });
+}
+
+// Updates the stale badge count on the Follow-Up button
+function updateStaleBadge() {
+  var el = document.getElementById('stale-badge');
+  if (!el) return;
+  var count = getStaleAddresses().length;
+  el.textContent = count > 0 ? count + ' ' : '';
+}
+
+// ──────────────────────────────────────────────────────────
+//  TERRITORY INTEL TAB
+// ──────────────────────────────────────────────────────────
+function renderTerritoryTab() {
+  renderSaturation();
+  renderCompetitorByTerritory();
+  renderStaleList();
+  renderDeployRecommendations();
+}
+
+// 1. Saturation — how worked-out is each territory?
+function renderSaturation() {
+  var el = document.getElementById('ti-saturation');
+  if (!el) return;
+
+  var terrMap = buildTerrMap();
+  var names   = Object.keys(terrMap).sort();
+
+  if (!names.length) {
+    el.innerHTML = noDataMsg('No territory data loaded');
+    return;
+  }
+
+  el.innerHTML = names.map(function(t) {
+    var d   = terrMap[t];
+    var cov = d.total > 0 ? d.worked / d.total : 0;
+    var cr  = d.worked > 0 ? d.sales / d.worked : 0;
+
+    // Saturation signal
+    var sig, sigColor, sigIcon;
+    if (cov >= 0.90) {
+      sig = 'Saturated — consider rotating reps out';
+      sigColor = '#ef4444'; sigIcon = '🔴';
+    } else if (cov >= 0.70) {
+      sig = 'Well-worked — push for closes on remaining homes';
+      sigColor = '#facc15'; sigIcon = '🟡';
+    } else if (cov >= 0.40) {
+      sig = 'Active — good opportunity remaining';
+      sigColor = '#10b981'; sigIcon = '🟢';
+    } else {
+      sig = 'Fresh territory — high opportunity';
+      sigColor = '#06b6d4'; sigIcon = '🔵';
+    }
+
+    var covW  = (cov * 100).toFixed(1);
+    var soldW = d.total > 0 ? ((d.sales / d.total) * 100).toFixed(1) : 0;
+
+    return '<div class="ti-terr-card">' +
+      '<div class="ti-terr-header">' +
+        '<div>' +
+          '<div class="ti-terr-name">' + escHtml(t) + '</div>' +
+          '<div class="ti-terr-sig" style="color:' + sigColor + '">' + sigIcon + ' ' + sig + '</div>' +
+        '</div>' +
+        '<div class="ti-terr-pct" style="color:' + sigColor + '">' + covW + '%</div>' +
+      '</div>' +
+      '<div class="ti-track">' +
+        '<div class="ti-fill" style="width:' + soldW + '%;background:#10b981"></div>' +
+        '<div class="ti-fill" style="width:' + (covW - soldW) + '%;background:rgba(0,86,150,.55)"></div>' +
+      '</div>' +
+      '<div class="ti-terr-stats">' +
+        '<span>' + d.worked + '/' + d.total + ' knocked</span>' +
+        '<span>' + d.sales + ' sales</span>' +
+        '<span>Close rate: ' + pct(cr) + '</span>' +
+        '<span>' + d.pending + ' remaining</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// 2. Competitor breakdown per territory
+function renderCompetitorByTerritory() {
+  var el = document.getElementById('ti-competitor-table');
+  if (!el) return;
+
+  var terrMap = buildTerrMap();
+  var names   = Object.keys(terrMap).sort();
+
+  if (!names.length) {
+    el.innerHTML = noDataMsg('No territory data loaded');
+    return;
+  }
+
+  // Header
+  var rows = '<div class="ti-comp-header">' +
+    '<span class="ti-comp-terr">Territory</span>' +
+    '<span class="ti-comp-col" style="color:#ef4444">Brightspd</span>' +
+    '<span class="ti-comp-col" style="color:#818cf8">In Contr</span>' +
+    '<span class="ti-comp-col" style="color:#10b981">Zito</span>' +
+    '<span class="ti-comp-col" style="color:#06b6d4">Open</span>' +
+  '</div>';
+
+  rows += names.map(function(t) {
+    var d       = terrMap[t];
+    var total   = d.total || 1;
+    var open    = total - d.brightspeed - d.incontract - d.sales;
+    open = Math.max(open, 0);
+
+    function bar(val, color) {
+      var w = ((val / total) * 100).toFixed(0);
+      return '<div class="ti-comp-bar-wrap">' +
+        '<span class="ti-comp-num">' + val + '</span>' +
+        '<div class="ti-mini-track"><div style="width:' + w + '%;background:' + color + ';height:100%;border-radius:2px"></div></div>' +
+      '</div>';
+    }
+
+    return '<div class="ti-comp-row">' +
+      '<span class="ti-comp-terr" title="' + escHtml(t) + '">' + escHtml(t) + '</span>' +
+      bar(d.brightspeed, '#ef4444') +
+      bar(d.incontract,  '#818cf8') +
+      bar(d.sales,       '#10b981') +
+      bar(open,          '#06b6d4') +
+    '</div>';
+  }).join('');
+
+  el.innerHTML = rows;
+}
+
+// 3. Stale follow-up list — oldest unvisited contacts first
+function renderStaleList() {
+  var el = document.getElementById('ti-stale-list');
+  if (!el) return;
+
+  var stale = getStaleAddresses();
+
+  if (!stale.length) {
+    el.innerHTML = '<div class="ti-empty">No follow-up contacts — all Not Home and Go Back doors are either fresh or cleared 👍</div>';
+    return;
+  }
+
+  var now = Date.now();
+  el.innerHTML = stale.slice(0, 20).map(function(a) {
+    var s       = (a.status || '').toLowerCase();
+    var icon    = s === 'goback' ? '🔄' : '🚪';
+    var label   = s === 'goback' ? 'Go Back' : 'Not Home';
+    var color   = s === 'goback' ? '#06b6d4' : '#d97706';
+
+    var age = '';
+    if (a.knockedAt) {
+      var hrs = (now - new Date(a.knockedAt).getTime()) / 3600000;
+      age = hrs < 1 ? Math.round(hrs * 60) + 'm ago'
+          : hrs < 24 ? hrs.toFixed(1) + 'h ago'
+          : Math.floor(hrs / 24) + 'd ago';
+    } else {
+      age = 'unknown';
+    }
+
+    var dist = '';
+    if (lastGPS && a.lat && a.lng) {
+      var mi = haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng);
+      dist = mi < 0.1 ? 'nearby' : mi.toFixed(2) + ' mi';
+    }
+
+    return '<div class="ti-stale-row" onclick="openForm(' + a.id + ');closeManagerPanel()">' +
+      '<div class="ti-stale-icon" style="color:' + color + '">' + icon + '</div>' +
+      '<div class="ti-stale-info">' +
+        '<div class="ti-stale-addr">' + escHtml(a.address) + '</div>' +
+        '<div class="ti-stale-meta">' +
+          '<span style="color:' + color + '">' + label + '</span>' +
+          (a.note ? ' · ' + escHtml(a.note.substring(0, 40)) : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="ti-stale-right">' +
+        (dist ? '<div class="ti-stale-dist">' + dist + '</div>' : '') +
+        '<div class="ti-stale-age">' + age + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('') +
+  (stale.length > 20 ? '<div class="ti-empty" style="margin-top:8px">+ ' + (stale.length - 20) + ' more — use Follow-Up Mode in sidebar to see all</div>' : '');
+}
+
+// 4. Deploy recommendations based on saturation + close rate + pending count
+function renderDeployRecommendations() {
+  var el = document.getElementById('ti-recommendations');
+  if (!el) return;
+
+  var terrMap = buildTerrMap();
+  var names   = Object.keys(terrMap);
+
+  if (!names.length) {
+    el.innerHTML = noDataMsg('No territory data to analyze');
+    return;
+  }
+
+  var recs = [];
+
+  names.forEach(function(t) {
+    var d    = terrMap[t];
+    var cov  = d.total > 0 ? d.worked / d.total : 0;
+    var cr   = d.worked > 0 ? d.sales / d.worked : 0;
+    var pending = d.pending;
+    var staleCount = addresses.filter(function(a) {
+      return (a.territory || '').trim() === t &&
+             (a.status === 'nothome' || a.status === 'goback');
+    }).length;
+
+    // Rule engine
+    if (cov >= 0.90) {
+      recs.push({
+        territory: t, priority: 'high',
+        icon: '🔴',
+        action: 'Rotate out — ' + (cov * 100).toFixed(0) + '% worked, only ' + pending + ' homes left',
+        detail: 'Territory is effectively saturated. Move reps to a fresh area to maintain pace.'
+      });
+    } else if (staleCount >= 10 && cov >= 0.50) {
+      recs.push({
+        territory: t, priority: 'medium',
+        icon: '🔄',
+        action: 'Schedule a revisit day — ' + staleCount + ' Not Home / Go Back contacts waiting',
+        detail: 'High stale count suggests many residents were not home during the initial sweep. A dedicated revisit run could yield hidden sales.'
+      });
+    } else if (cr >= 0.12 && cov < 0.50) {
+      recs.push({
+        territory: t, priority: 'high',
+        icon: '🟢',
+        action: 'Double down — ' + pct(cr) + ' close rate with ' + pending + ' homes untouched',
+        detail: 'Above-average performance with significant runway remaining. Add more reps or extend hours here.'
+      });
+    } else if (cr < 0.05 && d.worked >= 20) {
+      recs.push({
+        territory: t, priority: 'low',
+        icon: '🟡',
+        action: 'Review approach — only ' + pct(cr) + ' close rate after ' + d.worked + ' doors',
+        detail: 'Low close rate may indicate high competitor penetration or wrong rep-territory fit. Check competitor data.'
+      });
+    } else if (cov < 0.20 && d.total > 50) {
+      recs.push({
+        territory: t, priority: 'medium',
+        icon: '🔵',
+        action: 'Fresh territory — send more reps to ' + t,
+        detail: 'Only ' + (cov * 100).toFixed(0) + '% worked. High opportunity — deploy additional reps to increase pace.'
+      });
+    }
+  });
+
+  if (!recs.length) {
+    el.innerHTML = '<div class="ti-empty">All territories are well-balanced — no urgent recommendations right now.</div>';
+    return;
+  }
+
+  var priorityOrder = { high: 0, medium: 1, low: 2 };
+  recs.sort(function(a,b){ return (priorityOrder[a.priority]||0) - (priorityOrder[b.priority]||0); });
+
+  el.innerHTML = recs.map(function(r) {
+    var borderColor = r.priority === 'high' ? '#ef4444' : r.priority === 'medium' ? '#facc15' : '#6b7280';
+    return '<div class="ti-rec-card" style="border-left-color:' + borderColor + '">' +
+      '<div class="ti-rec-header">' +
+        '<span class="ti-rec-icon">' + r.icon + '</span>' +
+        '<div>' +
+          '<div class="ti-rec-terr">' + escHtml(r.territory) + '</div>' +
+          '<div class="ti-rec-action">' + r.action + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="ti-rec-detail">' + r.detail + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ── Shared territory aggregation ─────────────────────────
+function buildTerrMap() {
+  var m = {};
+  addresses.forEach(function(a) {
+    var t = (a.territory || 'Unknown').trim();
+    if (!m[t]) m[t] = {
+      total: 0, worked: 0, pending: 0, sales: 0,
+      mega: 0, gig: 0, nothome: 0,
+      brightspeed: 0, incontract: 0, goback: 0,
+      notinterested: 0, vacant: 0, business: 0
+    };
+    var d = m[t];
+    var s = (a.status || 'pending').toLowerCase();
+    d.total++;
+    if (!s || s === 'pending') { d.pending++; return; }
+    d.worked++;
+    if (s === 'mega')          { d.mega++;          d.sales++; }
+    else if (s === 'gig')      { d.gig++;           d.sales++; }
+    else if (s === 'nothome')    d.nothome++;
+    else if (s === 'brightspeed') d.brightspeed++;
+    else if (s === 'incontract')  d.incontract++;
+    else if (s === 'goback')      d.goback++;
+    else if (s === 'notinterested') d.notinterested++;
+    else if (s === 'vacant')      d.vacant++;
+    else if (s === 'business')    d.business++;
+  });
+  return m;
+}
+
+function noDataMsg(msg) {
+  return '<div class="ti-empty">' + escHtml(msg) + '</div>';
 }
 
 function timeAgo(isoString) {

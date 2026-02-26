@@ -1911,3 +1911,263 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   overflow: hidden;
 }
 .fc-pkg-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+
+/* ══════════════════════════════════════════════════════════
+   TIER 3 — TERRITORY INTELLIGENCE
+   ══════════════════════════════════════════════════════════ */
+
+/* ── Sidebar mode buttons (Route / Follow-Up) ────────────── */
+.pl-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.pl-mode-btns { display: flex; gap: 5px; }
+.pl-mode-btn {
+  background: rgba(255,255,255,.05);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.pl-mode-btn:hover { color: var(--text); border-color: var(--accent); }
+.pl-mode-btn.active {
+  background: rgba(0,86,150,.25);
+  border-color: rgba(0,86,150,.5);
+  color: var(--accent);
+}
+#stale-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-family: 'Space Mono', monospace;
+  color: #d97706;
+}
+
+/* Distance / age label on address rows */
+.ar-dist {
+  font-size: 9px;
+  color: var(--accent);
+  font-family: 'Space Mono', monospace;
+  margin-top: 2px;
+}
+
+/* ── Territory Intel tab — shared ─────────────────────────── */
+.ti-empty {
+  text-align: center;
+  padding: 20px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+  line-height: 1.6;
+}
+
+/* ── Saturation cards ─────────────────────────────────────── */
+.ti-terr-card {
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.ti-terr-card:last-child { margin-bottom: 0; }
+.ti-terr-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ti-terr-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.ti-terr-sig {
+  font-size: 10px;
+  font-family: 'Space Mono', monospace;
+  line-height: 1.4;
+}
+.ti-terr-pct {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: 'Space Mono', monospace;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.ti-track {
+  height: 8px;
+  background: rgba(255,255,255,.06);
+  border-radius: 5px;
+  overflow: hidden;
+  display: flex;
+  margin-bottom: 8px;
+}
+.ti-fill { height: 100%; }
+.ti-terr-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+}
+
+/* ── Competitor table ─────────────────────────────────────── */
+.ti-comp-header,
+.ti-comp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.ti-comp-header {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.ti-comp-row:last-child { border-bottom: none; }
+.ti-comp-terr {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ti-comp-col {
+  width: 60px;
+  text-align: center;
+  font-size: 9px;
+  font-family: 'Space Mono', monospace;
+  flex-shrink: 0;
+}
+.ti-comp-bar-wrap {
+  width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ti-comp-num {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'Space Mono', monospace;
+  color: var(--text);
+}
+.ti-mini-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255,255,255,.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* ── Stale follow-up list ─────────────────────────────────── */
+.ti-stale-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(255,255,255,.02);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.ti-stale-row:last-child { margin-bottom: 0; }
+.ti-stale-row:hover { border-color: var(--accent); }
+.ti-stale-icon { font-size: 20px; flex-shrink: 0; }
+.ti-stale-info { flex: 1; min-width: 0; }
+.ti-stale-addr {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ti-stale-meta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  font-family: 'Space Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ti-stale-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.ti-stale-dist {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'Space Mono', monospace;
+  color: var(--accent);
+}
+.ti-stale-age {
+  font-size: 9px;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+}
+
+/* ── Deploy recommendation cards ─────────────────────────── */
+.ti-rec-card {
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.ti-rec-card:last-child { margin-bottom: 0; }
+.ti-rec-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.ti-rec-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.ti-rec-terr {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+  margin-bottom: 2px;
+}
+.ti-rec-action {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+}
+.ti-rec-detail {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+  font-family: 'Space Mono', monospace;
+  margin-left: 28px;
+}
