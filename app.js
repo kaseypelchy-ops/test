@@ -12,6 +12,15 @@ var APP_VERSION = '1.0.3';
 var BUILD_ID    = '2026.02.22';
 var APP_ENV     = 'Production';
 
+// ── Feature state ─────────────────────────────────────────
+var soundEnabled     = false;          // 🔊 Sound toggle
+var optimizedRoute   = [];             // 🗺 TSP-ordered address ID array
+var routeOptimized   = false;          // true when optimizedRoute is active
+var routeNumberMarkers = [];           // Leaflet markers for stop numbers on map
+
+// ── Manager config ────────────────────────────────────────
+var MANAGER_EMAIL = 'kasey.pelchy@zitomedia.com'; // EOD digest recipient
+
 var addresses  = [];
 var activeId   = null;
 var selPkg     = null;
@@ -479,6 +488,7 @@ function launchApp() {
     startPolling();
     maybeAutoCollapse();
     initBadge();
+    initSound(); // 🔊 restore sound preference
     // Ask for GPS permission right after launch so Route Mode is ready to go
     startGPSPing();
     // Managers land on the team dashboard automatically
@@ -1100,15 +1110,26 @@ function buildList(filter) {
     }
   // Route mode: sort all addresses by distance from current GPS, nearest first
   } else if (routeMode && lastGPS) {
-    list = addresses.slice().sort(function(a, b) {
-      var distA = (a.lat && a.lng)
-        ? haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng)
-        : 9999;
-      var distB = (b.lat && b.lng)
-        ? haversineMiles(lastGPS.lat, lastGPS.lng, b.lat, b.lng)
-        : 9999;
-      return distA - distB;
-    });
+    if (routeOptimized && optimizedRoute.length > 0) {
+      // Use pre-computed TSP order — stays stable as rep walks
+      var routeIdxMap = {};
+      optimizedRoute.forEach(function(id, idx) { routeIdxMap[id] = idx; });
+      list = addresses.slice().sort(function(a, b) {
+        var ia = (routeIdxMap[a.id] !== undefined) ? routeIdxMap[a.id] : 99999;
+        var ib = (routeIdxMap[b.id] !== undefined) ? routeIdxMap[b.id] : 99999;
+        return ia - ib;
+      });
+    } else {
+      list = addresses.slice().sort(function(a, b) {
+        var distA = (a.lat && a.lng)
+          ? haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng)
+          : 9999;
+        var distB = (b.lat && b.lng)
+          ? haversineMiles(lastGPS.lat, lastGPS.lng, b.lat, b.lng)
+          : 9999;
+        return distA - distB;
+      });
+    }
     if (filter) {
       var q = filter.toLowerCase();
       list = list.filter(function(a) {
@@ -1148,9 +1169,12 @@ function buildList(filter) {
       ? '<div class="ar-note">' + escHtml(a.note.trim()) + '</div>'
       : '';
 
-    // Route mode: show distance from current GPS position
+    // Route mode: show stop number (optimized) or distance (nearest-first)
     var modeLine = '';
-    if (routeMode && lastGPS && a.lat && a.lng) {
+    if (routeMode && routeOptimized && optimizedRoute.indexOf(a.id) >= 0) {
+      var stopNum = optimizedRoute.indexOf(a.id) + 1;
+      modeLine = '<div class="ar-dist" style="color:#60a5fa;font-weight:700">🗺 Stop #' + stopNum + '</div>';
+    } else if (routeMode && lastGPS && a.lat && a.lng) {
       var mi = haversineMiles(lastGPS.lat, lastGPS.lng, a.lat, a.lng);
       var distStr = mi < 0.1 ? 'Nearby' : mi.toFixed(2) + ' mi';
       modeLine = '<div class="ar-dist">📍 ' + distStr + '</div>';
@@ -1741,6 +1765,12 @@ function submitSale(pkgLabel) {
   updateStats();
   sendHeartbeat();
   toast('✅ ' + pkgLabel + ' sold to ' + first + ' ' + last + '!', 't-ok');
+
+  // ── Haptic feedback — two-pulse celebration pattern ──────
+  try { if (navigator.vibrate) navigator.vibrate([100, 50, 200]); } catch(e) {}
+  // ── Sound chime ──────────────────────────────────────────
+  playSaleChime();
+
   closeForm();
 }
 
@@ -2625,13 +2655,16 @@ function toggleRouteMode() {
     return;
   }
 
+  // Clear optimized route when toggling route mode off
+  if (!routeMode) clearOptimizedRoute();
+
   buildList();
   toast(routeMode ? '🧭 Route Mode ON — sorted nearest first' : '🧭 Route Mode OFF', 't-info');
 }
 
 function toggleStaleMode() {
   staleMode = !staleMode;
-  if (staleMode) routeMode = false;  // mutually exclusive
+  if (staleMode) { routeMode = false; clearOptimizedRoute(); }  // mutually exclusive
 
   var btn      = document.getElementById('btn-stale-mode');
   var routeBtn = document.getElementById('btn-route-mode');
@@ -3672,3 +3705,391 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof togglePinDropMode === 'function') togglePinDropMode();
   });
 });
+
+
+// ══════════════════════════════════════════════════════════
+//  🔊 SOUND TOGGLE
+//  Web Audio API chime — no external files, works offline.
+//  Three-note ascending major chord on every sale.
+// ══════════════════════════════════════════════════════════
+
+function initSound() {
+  try {
+    var saved = localStorage.getItem('fieldos_sound');
+    soundEnabled = (saved === '1');
+  } catch(e) {}
+  applySoundBtn();
+}
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  try { localStorage.setItem('fieldos_sound', soundEnabled ? '1' : '0'); } catch(e) {}
+  applySoundBtn();
+  // Play a quick preview so the rep knows it's on
+  if (soundEnabled) playSaleChime();
+  toast(soundEnabled ? '🔊 Sound ON — chime plays on each sale' : '🔇 Sound OFF', 't-info');
+}
+
+function applySoundBtn() {
+  var btn = document.getElementById('btn-sound-toggle');
+  if (!btn) return;
+  btn.textContent = soundEnabled ? '🔊' : '🔇';
+  btn.classList.toggle('active', soundEnabled);
+  btn.title = soundEnabled
+    ? 'Sound ON — click to mute'
+    : 'Sound OFF — click to enable sale chime';
+}
+
+function playSaleChime() {
+  if (!soundEnabled) return;
+  try {
+    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    var ctx = new AudioCtx();
+
+    // C5 → E5 → G5 ascending major chord arpeggio
+    var notes = [
+      { freq: 523.25, delay: 0.00 },
+      { freq: 659.25, delay: 0.14 },
+      { freq: 783.99, delay: 0.28 }
+    ];
+
+    notes.forEach(function(n) {
+      var osc  = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = 'sine';
+      osc.frequency.value = n.freq;
+
+      var t0 = ctx.currentTime + n.delay;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(0.28, t0 + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.65);
+
+      osc.start(t0);
+      osc.stop(t0 + 0.7);
+    });
+
+    // Auto-close context after chime finishes to free system resources
+    setTimeout(function() {
+      try { ctx.close(); } catch(e) {}
+    }, 1200);
+  } catch(e) {}
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  🗺 WALKING ROUTE OPTIMIZER
+//  Nearest-neighbor TSP from current GPS position.
+//  Only routes pending knockable addresses that have coords.
+//  Draws numbered stop badges on map pins.
+// ══════════════════════════════════════════════════════════
+
+function optimizeRoute() {
+  if (!lastGPS) {
+    toast('📍 Enable location first — GPS is needed to optimize your route', 't-err');
+    showGPSPrompt();
+    return;
+  }
+
+  // Only consider pending knockable addresses with coordinates
+  var candidates = addresses.filter(function(a) {
+    if (!isKnockable(a)) return false;
+    if (!a.lat || !a.lng) return false;
+    var s = (a.status || 'pending').toLowerCase();
+    return !s || s === 'pending';
+  });
+
+  if (candidates.length === 0) {
+    toast('✅ No pending addresses to route — all doors have been worked!', 't-info');
+    return;
+  }
+
+  toast('🗺 Optimizing ' + candidates.length + ' stops…', 't-info');
+
+  // Nearest-neighbor greedy TSP — O(n²), fast enough for up to ~500 addresses
+  var start     = { lat: lastGPS.lat, lng: lastGPS.lng };
+  var unvisited = candidates.slice();
+  var ordered   = [];
+  var current   = start;
+
+  while (unvisited.length > 0) {
+    var nearestDist = Infinity;
+    var nearestIdx  = -1;
+    for (var i = 0; i < unvisited.length; i++) {
+      var d = haversineMiles(current.lat, current.lng, unvisited[i].lat, unvisited[i].lng);
+      if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+    }
+    ordered.push(unvisited[nearestIdx]);
+    current = { lat: unvisited[nearestIdx].lat, lng: unvisited[nearestIdx].lng };
+    unvisited.splice(nearestIdx, 1);
+  }
+
+  // Commit the route
+  optimizedRoute = ordered.map(function(a) { return a.id; });
+  routeOptimized = true;
+  routeMode      = true;
+  staleMode      = false;
+
+  // Sync button states
+  var routeBtn  = document.getElementById('btn-route-mode');
+  var staleBtn  = document.getElementById('btn-stale-mode');
+  var optBtn    = document.getElementById('btn-optimize-route');
+  if (routeBtn) routeBtn.classList.add('active');
+  if (staleBtn) staleBtn.classList.remove('active');
+  if (optBtn)   optBtn.classList.add('active');
+
+  // Draw numbered badges over address pins
+  drawRouteNumbers();
+  buildList();
+
+  // Compute rough total walk distance for the toast
+  var totalMi = 0;
+  for (var j = 0; j < ordered.length - 1; j++) {
+    totalMi += haversineMiles(
+      ordered[j].lat, ordered[j].lng,
+      ordered[j + 1].lat, ordered[j + 1].lng
+    );
+  }
+
+  toast(
+    '🗺 Route set — ' + ordered.length + ' stops · ~' + totalMi.toFixed(1) + ' mi total',
+    't-ok'
+  );
+}
+
+function drawRouteNumbers() {
+  clearRouteNumbers();
+  if (!mapObj || !routeOptimized || optimizedRoute.length === 0) return;
+
+  optimizedRoute.forEach(function(id, index) {
+    var addr = null;
+    for (var i = 0; i < addresses.length; i++) {
+      if (addresses[i].id === id) { addr = addresses[i]; break; }
+    }
+    if (!addr || !addr.lat || !addr.lng) return;
+
+    var num  = index + 1;
+    var label = num <= 99 ? String(num) : '…';
+
+    var icon = L.divIcon({
+      className: '',
+      html: '<div class="route-num-badge">' + label + '</div>',
+      iconSize:   [22, 22],
+      iconAnchor: [11, 11]
+    });
+
+    // Offset the number badge slightly up-right so it doesn't cover the main pin
+    var m = L.marker(
+      [addr.lat + 0.000085, addr.lng + 0.000130],
+      { icon: icon, interactive: false, zIndexOffset: 800 }
+    ).addTo(mapObj);
+
+    routeNumberMarkers.push(m);
+  });
+}
+
+function clearRouteNumbers() {
+  if (!mapObj) return;
+  routeNumberMarkers.forEach(function(m) {
+    try { mapObj.removeLayer(m); } catch(e) {}
+  });
+  routeNumberMarkers = [];
+}
+
+function clearOptimizedRoute() {
+  optimizedRoute   = [];
+  routeOptimized   = false;
+  clearRouteNumbers();
+  var optBtn = document.getElementById('btn-optimize-route');
+  if (optBtn) optBtn.classList.remove('active');
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  📊 DAILY DIGEST / EOD REPORT
+//  Summarizes the rep's shift and emails to the manager.
+//  Also fires a webhook for Google Sheets logging.
+// ══════════════════════════════════════════════════════════
+
+function openEODDigest() {
+  var rn = (repName || '').trim().toLowerCase();
+
+  // For reps: count only their own addresses. For managers: count everything.
+  var universe = isManager()
+    ? addresses.filter(isKnockable)
+    : addresses.filter(function(a) {
+        return isKnockable(a) && (a.salesperson || '').toLowerCase() === rn;
+      });
+
+  // If rep has no salesperson-tagged addresses yet, fall back to all knockable
+  // (covers sessions where the rep hasn't submitted anything yet)
+  if (!isManager() && universe.length === 0) {
+    universe = addresses.filter(isKnockable);
+  }
+
+  var worked = universe.filter(function(a) {
+    var s = (a.status || 'pending').toLowerCase();
+    return s !== 'pending' && s !== '';
+  }).length;
+
+  var megaSales  = universe.filter(function(a) { return a.status === 'mega'; }).length;
+  var gigSales   = universe.filter(function(a) { return a.status === 'gig';  }).length;
+  var totalSales = megaSales + gigSales;
+  var closeRate  = worked > 0 ? Math.round((totalSales / worked) * 100) : 0;
+
+  // Shift duration from session start timestamp
+  var sessionStart = '';
+  var shiftHours   = 0;
+  var shiftStr     = '—';
+  try { sessionStart = localStorage.getItem('fieldos_session_start') || ''; } catch(e) {}
+  if (sessionStart) {
+    shiftHours = (Date.now() - new Date(sessionStart).getTime()) / 3600000;
+    var hh = Math.floor(shiftHours);
+    var mm = Math.round((shiftHours - hh) * 60);
+    shiftStr = hh + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+  }
+
+  var mrr          = (megaSales * FC_MONTHLY.mega) + (gigSales * FC_MONTHLY.gig);
+  var salesPerHour = shiftHours > 0.1 ? (totalSales / shiftHours).toFixed(2) : '—';
+  var doorsPerHour = shiftHours > 0.1 ? (worked / shiftHours).toFixed(1) : '—';
+
+  // Door-by-door status breakdown
+  var statusCounts = {};
+  universe.forEach(function(a) {
+    var s = (a.status || 'pending').toLowerCase();
+    if (s !== 'pending' && s !== '') {
+      statusCounts[s] = (statusCounts[s] || 0) + 1;
+    }
+  });
+  var statusLines = Object.keys(statusCounts)
+    .sort(function(a, b) { return statusCounts[b] - statusCounts[a]; })
+    .map(function(s) {
+      return '  ' + (STATUS_LABELS[s] || s).padEnd(20, ' ') + statusCounts[s];
+    }).join('\n') || '  (no doors logged yet)';
+
+  // Territory breakdown (managers only)
+  var terrSection = '';
+  if (isManager()) {
+    var terrMap = buildTerrMap();
+    var terrLines = Object.keys(terrMap).sort().map(function(t) {
+      var d  = terrMap[t];
+      var cr = d.worked > 0 ? Math.round((d.sales / d.worked) * 100) : 0;
+      return '  ' + t.substring(0, 18).padEnd(20, ' ') +
+        d.sales + ' sales / ' + d.worked + ' doors (' + cr + '% CR)';
+    }).join('\n');
+    terrSection = '\n\nTERRITORY BREAKDOWN\n' +
+      '─────────────────────────────────────────\n' +
+      terrLines;
+  }
+
+  var today = new Date().toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+  });
+
+  var body = [
+    '╔══════════════════════════════════════════╗',
+    '║      ZITO FIELDOS — END OF SHIFT REPORT  ║',
+    '╚══════════════════════════════════════════╝',
+    '',
+    'Rep:  ' + repName,
+    'Date: ' + today,
+    '',
+    '──── SHIFT SUMMARY ────────────────────────',
+    'Duration:        ' + shiftStr,
+    'Doors Worked:    ' + worked,
+    'Total Sales:     ' + totalSales +
+      (totalSales > 0 ? '  (' + megaSales + ' Mega / ' + gigSales + ' Gig)' : ''),
+    'Close Rate:      ' + closeRate + '%',
+    'New MRR:         $' + mrr.toFixed(2) + '/mo',
+    'Sales / Hour:    ' + salesPerHour,
+    'Doors / Hour:    ' + doorsPerHour,
+    '',
+    '──── DOOR LOG ─────────────────────────────',
+    statusLines,
+    terrSection,
+    '',
+    '──── NEXT STEPS ───────────────────────────',
+    'Follow-ups pending: ' + getStaleAddresses().length,
+    '',
+    '─────────────────────────────────────────',
+    'Sent via Zito FieldOS v' + APP_VERSION
+  ].join('\n');
+
+  // Stash for send/copy functions
+  window._eodDigestText    = body;
+  window._eodDigestSubject = '[FieldOS] EOD Report — ' + repName + ' — ' +
+    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  var el = document.getElementById('eod-digest-to');
+  if (el) el.textContent = MANAGER_EMAIL;
+
+  var bodyEl = document.getElementById('eod-digest-body');
+  if (bodyEl) bodyEl.textContent = body;
+
+  var modal = document.getElementById('eod-digest-modal');
+  if (modal) modal.classList.add('open');
+}
+
+function closeEODDigest() {
+  var modal = document.getElementById('eod-digest-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+function sendEODEmail() {
+  var subject = window._eodDigestSubject || '[FieldOS] EOD Report';
+  var body    = window._eodDigestText    || '';
+
+  // Open mail client
+  window.location.href =
+    'mailto:' + encodeURIComponent(MANAGER_EMAIL) +
+    '?subject=' + encodeURIComponent(subject) +
+    '&body='    + encodeURIComponent(body);
+
+  // Fire webhook for Sheets logging (no-cors — we don't need the response)
+  if (webhookURL) {
+    fetch(webhookURL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type:        'eod_report',
+        salesperson: repName,
+        date:        new Date().toISOString(),
+        report:      body
+      })
+    }).catch(function() {});
+  }
+
+  closeEODDigest();
+  toast('📬 EOD report sent to manager', 't-ok');
+}
+
+function copyEODToClipboard() {
+  var text = window._eodDigestText || '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      toast('📋 Report copied to clipboard', 't-ok');
+    }).catch(function() { _eodCopyFallback_(text); });
+  } else {
+    _eodCopyFallback_(text);
+  }
+}
+
+function _eodCopyFallback_(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    document.execCommand('copy');
+    toast('📋 Report copied to clipboard', 't-ok');
+  } catch(e) {
+    toast('⚠ Could not copy — try the Email button', 't-err');
+  }
+  document.body.removeChild(ta);
+}
