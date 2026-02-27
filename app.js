@@ -2077,6 +2077,7 @@ function switchMgrTab(tab, btn) {
   if (tab === 'analytics') renderAnalyticsTab();
   if (tab === 'coverage')  renderCoverageTab();
   if (tab === 'forecast')  renderForecastTab();
+  if (tab === 'ai')        loadAIKeyStatus();
   if (tab === 'territory') renderTerritoryTab();
 }
 function refreshManagerPanel() {
@@ -3681,6 +3682,33 @@ document.addEventListener('DOMContentLoaded', function() {
 //  AI COACH — Territory Analysis via Claude API
 // ──────────────────────────────────────────────────────────
 
+function saveAIKey() {
+  var key = (document.getElementById('ai-key-input').value || '').trim();
+  if (!key.startsWith('sk-ant-')) {
+    document.getElementById('ai-key-status').style.color = '#ef4444';
+    document.getElementById('ai-key-status').textContent = '⚠️ Key should start with sk-ant-';
+    return;
+  }
+  try { localStorage.setItem('zito_ai_key', key); } catch(e) {}
+  document.getElementById('ai-key-input').value = '';
+  document.getElementById('ai-key-status').style.color = '#10b981';
+  document.getElementById('ai-key-status').textContent = '✓ Key saved — ready to analyze';
+}
+
+function loadAIKeyStatus() {
+  var key = '';
+  try { key = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
+  var statusEl = document.getElementById('ai-key-status');
+  if (!statusEl) return;
+  if (key) {
+    statusEl.style.color = '#10b981';
+    statusEl.textContent = '✓ API key saved (sk-ant-…' + key.slice(-4) + ')';
+  } else {
+    statusEl.style.color = 'var(--muted)';
+    statusEl.textContent = 'Enter your Anthropic API key above to enable AI analysis. Get one at console.anthropic.com';
+  }
+}
+
 function buildTerritoryContext() {
   var knockable = addresses.filter(isKnockable);
   var total     = knockable.length;
@@ -3757,8 +3785,17 @@ function runAIAnalysis() {
   var question = (document.getElementById('ai-question-input').value || '').trim();
   if (!question) question = 'Give me a complete analysis of the territory and tell me where to focus knocking.';
 
+  var apiKey = '';
+  try { apiKey = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
+
   var responseEl = document.getElementById('ai-response');
-  responseEl.innerHTML = '<div class="ai-thinking"><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><span style="margin-left:4px">Analyzing territory data…</span></div>';
+
+  if (!apiKey) {
+    responseEl.innerHTML = '<span style="color:#ef4444">⚠️ No API key saved. Enter your Anthropic API key above and click Save Key first.</span>';
+    return;
+  }
+
+  responseEl.innerHTML = '<div class="ai-thinking"><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><span style="margin-left:8px">Analyzing territory data…</span></div>';
 
   var context = buildTerritoryContext();
 
@@ -3768,7 +3805,12 @@ function runAIAnalysis() {
 
   fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -3779,14 +3821,14 @@ function runAIAnalysis() {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) {
-      responseEl.textContent = '⚠️ API error: ' + (data.error.message || JSON.stringify(data.error));
+      responseEl.innerHTML = '<span style="color:#ef4444">⚠️ API error: ' + (data.error.message || JSON.stringify(data.error)) + '</span>';
       return;
     }
     var text = (data.content || []).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
     responseEl.textContent = text || '(No response)';
   })
   .catch(function(err) {
-    responseEl.textContent = '⚠️ Request failed: ' + err.message;
+    responseEl.innerHTML = '<span style="color:#ef4444">⚠️ Request failed: ' + err.message + '</span>';
   });
 }
 

@@ -1637,9 +1637,13 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.mgr-tabs::-webkit-scrollbar { display: none; }
 .mgr-tab {
-  flex: 1;
+  flex: 0 0 auto;
   background: transparent;
   border: none;
   border-radius: 8px;
