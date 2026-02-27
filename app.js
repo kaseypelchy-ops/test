@@ -3791,15 +3791,7 @@ function runAIAnalysis() {
   var question = (document.getElementById('ai-question-input').value || '').trim();
   if (!question) question = 'Give me a complete analysis of the territory and tell me where to focus knocking.';
 
-  var apiKey = '';
-  try { apiKey = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
-
   var responseEl = document.getElementById('ai-response');
-
-  if (!apiKey) {
-    responseEl.innerHTML = '<span style="color:#ef4444">⚠️ No API key saved. Enter your Anthropic API key above and click Save Key first.</span>';
-    return;
-  }
 
   responseEl.innerHTML = '<div class="ai-thinking"><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><span style="margin-left:8px">Analyzing territory data…</span></div>';
 
