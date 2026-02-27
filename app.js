@@ -3695,17 +3695,15 @@ function saveAIKey() {
   document.getElementById('ai-key-status').textContent = '✓ Key saved — ready to analyze';
 }
 
+var ZITO_AI_KEY = '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';
+
 function loadAIKeyStatus() {
-  var key = '';
-  try { key = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
+  var keyRowEl = document.getElementById('ai-key-row');
   var statusEl = document.getElementById('ai-key-status');
-  if (!statusEl) return;
-  if (key) {
+  if (keyRowEl) keyRowEl.style.display = 'none';
+  if (statusEl) {
     statusEl.style.color = '#10b981';
-    statusEl.textContent = '✓ API key saved (sk-ant-…' + key.slice(-4) + ')';
-  } else {
-    statusEl.style.color = 'var(--muted)';
-    statusEl.textContent = 'Enter your Anthropic API key above to enable AI analysis. Get one at console.anthropic.com';
+    statusEl.textContent = '✓ AI ready';
   }
 }
 
@@ -3785,8 +3783,8 @@ function runAIAnalysis() {
   var question = (document.getElementById('ai-question-input').value || '').trim();
   if (!question) question = 'Give me a complete analysis of the territory and tell me where to focus knocking.';
 
-  var apiKey = '';
-  try { apiKey = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
+  var apiKey = ZITO_AI_KEY || '';
+  try { apiKey = apiKey || localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
 
   var responseEl = document.getElementById('ai-response');
 
