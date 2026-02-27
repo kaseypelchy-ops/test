@@ -2077,7 +2077,6 @@ function switchMgrTab(tab, btn) {
   if (tab === 'analytics') renderAnalyticsTab();
   if (tab === 'coverage')  renderCoverageTab();
   if (tab === 'forecast')  renderForecastTab();
-  if (tab === 'ai')        loadAIKeyStatus();
   if (tab === 'territory') renderTerritoryTab();
 }
 function refreshManagerPanel() {
@@ -3681,39 +3680,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // ──────────────────────────────────────────────────────────
 //  AI COACH — Territory Analysis via Claude API
 // ──────────────────────────────────────────────────────────
-
-function saveAIKey() {
-  var key = (document.getElementById('ai-key-input').value || '').trim();
-  if (!key.startsWith('sk-ant-')) {
-    document.getElementById('ai-key-status').style.color = '#ef4444';
-    document.getElementById('ai-key-status').textContent = '⚠️ Key should start with sk-ant-';
-    return;
-  }
-  try { localStorage.setItem('zito_ai_key', key); } catch(e) {}
-  document.getElementById('ai-key-input').value = '';
-  document.getElementById('ai-key-status').style.color = '#10b981';
-  document.getElementById('ai-key-status').textContent = '✓ Key saved — ready to analyze';
-}
-
-function loadAIKeyStatus() {
-  var key = '';
-  try { key = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
-  var keyRowEl = document.getElementById('ai-key-row');
-  var statusEl = document.getElementById('ai-key-status');
-  if (key) {
-    if (keyRowEl) keyRowEl.style.display = 'none';
-    if (statusEl) {
-      statusEl.style.color = '#10b981';
-      statusEl.textContent = '✓ API key saved — ready to analyze  (clear: tap to re-enter)';
-    }
-  } else {
-    if (keyRowEl) keyRowEl.style.display = 'flex';
-    if (statusEl) {
-      statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = 'Paste your Anthropic API key above — stored locally on this device only. Get one at console.anthropic.com';
-    }
-  }
-}
 
 function buildTerritoryContext() {
   var knockable = addresses.filter(isKnockable);
