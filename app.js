@@ -3765,8 +3765,7 @@ function runAIAnalysis() {
 
   fetch(webhookURL, {
     method: 'POST',
-    mode: 'no-cors',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type:     'ai_analysis',
       question: question,
