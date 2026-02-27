@@ -3695,15 +3695,23 @@ function saveAIKey() {
   document.getElementById('ai-key-status').textContent = '✓ Key saved — ready to analyze';
 }
 
-var ZITO_AI_KEY = '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';
-
 function loadAIKeyStatus() {
+  var key = '';
+  try { key = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
   var keyRowEl = document.getElementById('ai-key-row');
   var statusEl = document.getElementById('ai-key-status');
-  if (keyRowEl) keyRowEl.style.display = 'none';
-  if (statusEl) {
-    statusEl.style.color = '#10b981';
-    statusEl.textContent = '✓ AI ready';
+  if (key) {
+    if (keyRowEl) keyRowEl.style.display = 'none';
+    if (statusEl) {
+      statusEl.style.color = '#10b981';
+      statusEl.textContent = '✓ API key saved — ready to analyze  (clear: tap to re-enter)';
+    }
+  } else {
+    if (keyRowEl) keyRowEl.style.display = 'flex';
+    if (statusEl) {
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'Paste your Anthropic API key above — stored locally on this device only. Get one at console.anthropic.com';
+    }
   }
 }
 
@@ -3783,8 +3791,8 @@ function runAIAnalysis() {
   var question = (document.getElementById('ai-question-input').value || '').trim();
   if (!question) question = 'Give me a complete analysis of the territory and tell me where to focus knocking.';
 
-  var apiKey = ZITO_AI_KEY || '';
-  try { apiKey = apiKey || localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
+  var apiKey = '';
+  try { apiKey = localStorage.getItem('zito_ai_key') || ''; } catch(e) {}
 
   var responseEl = document.getElementById('ai-response');
 
@@ -3797,33 +3805,24 @@ function runAIAnalysis() {
 
   var context = buildTerritoryContext();
 
-  var systemPrompt = 'You are an expert fiber internet sales coach for ZitoFiber. You analyze door-to-door canvassing data and give managers sharp, actionable guidance. Be direct, specific, and practical. Use the territory data provided to give concrete recommendations — reference specific territories, times, and numbers. Keep responses concise but thorough. Format with short paragraphs and use emoji bullets (📍🕐💡🎯🔄) to organize key points.';
-
-  var userMessage = 'Here is our current territory data:\n\n' + context + '\n\n---\n\nQuestion: ' + question;
-
-  fetch('https://api.anthropic.com/v1/messages', {
+  fetch(webhookURL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }]
+      type:     'ai_analysis',
+      question: question,
+      context:  context,
+      repName:  repName
     })
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) {
-      responseEl.innerHTML = '<span style="color:#ef4444">⚠️ API error: ' + (data.error.message || JSON.stringify(data.error)) + '</span>';
+    if (data.status === 'error') {
+      responseEl.innerHTML = '<span style="color:#ef4444">⚠️ ' + (data.message || 'Unknown error') + '</span>';
       return;
     }
-    var text = (data.content || []).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
-    responseEl.textContent = text || '(No response)';
+    responseEl.textContent = data.answer || '(No response)';
   })
   .catch(function(err) {
     responseEl.innerHTML = '<span style="color:#ef4444">⚠️ Request failed: ' + err.message + '</span>';
