@@ -243,6 +243,7 @@
         <button class="mgr-tab" onclick="switchMgrTab('coverage',this)">🗺 Coverage</button>
         <button class="mgr-tab" onclick="switchMgrTab('forecast',this)">💰 Forecast</button>
         <button class="mgr-tab" onclick="switchMgrTab('territory',this)">🎯 Territory</button>
+        <button class="mgr-tab" onclick="switchMgrTab('ai',this)">🤖 AI Coach</button>
       </div>
 
       <!-- ── TAB: TEAM ── -->
@@ -388,6 +389,29 @@
           <div class="ana-card-head">📋 Deploy Recommendations</div>
           <div class="ana-card-sub">Where to focus reps next based on coverage and close rate data</div>
           <div id="ti-recommendations"></div>
+        </div>
+
+      </div>
+
+      <!-- ── TAB: AI COACH ── -->
+      <div id="mgr-tab-ai" class="mgr-tab-panel">
+
+        <div class="ana-card">
+          <div class="ana-card-head">🤖 AI Territory Coach</div>
+          <div class="ana-card-sub">Real-time analysis of your territory data — where to knock, when to knock, who to send</div>
+          <div id="ai-question-row" style="display:flex;gap:8px;margin:12px 0;">
+            <input id="ai-question-input" type="text" placeholder="Ask anything… e.g. 'Where should I focus tomorrow?'" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;" />
+            <button onclick="runAIAnalysis()" style="padding:8px 16px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:12px;cursor:pointer;white-space:nowrap;">Analyze</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;" id="ai-quick-btns">
+            <button class="ai-quick-btn" onclick="runAIQuick('Where should I focus knocking tomorrow and why?')">📍 Where to knock</button>
+            <button class="ai-quick-btn" onclick="runAIQuick('What time of day should my reps be knocking to maximize close rate?')">🕐 Best time to knock</button>
+            <button class="ai-quick-btn" onclick="runAIQuick('Which territories are underperforming and what should I do about it?')">📉 Underperformers</button>
+            <button class="ai-quick-btn" onclick="runAIQuick('Who are my top performing reps and what makes them successful?')">🏆 Top reps</button>
+            <button class="ai-quick-btn" onclick="runAIQuick('What is my projected revenue and how can I increase it?')">💰 Revenue outlook</button>
+            <button class="ai-quick-btn" onclick="runAIQuick('Which doors should be revisited today based on go back and not home data?')">🔄 Revisit list</button>
+          </div>
+          <div id="ai-response" style="font-size:12px;line-height:1.7;color:var(--text);white-space:pre-wrap;min-height:60px;"></div>
         </div>
 
       </div>

@@ -327,6 +327,7 @@ addresses = json.rows.map(function(row, i) {
     // ✅ IMPORTANT: bring note over from Apps Script
     note:         (row.note || row.dispositionNote || row.disposition_note || '').toString().trim(),
 
+    knockedAt:    (row.knockedAt || row.knocked_at || null),
     sale:         null
   };
 });
@@ -677,7 +678,8 @@ function renderHeatMap() {
       color:       style.fill,
       opacity:     0.15,
       weight:      1,
-      interactive: false   // don't intercept map clicks
+      interactive: false,   // don't intercept map clicks
+      pane:        'heatPane'
     });
     circles.push(circle);
   });
@@ -719,6 +721,10 @@ function setSatelliteBaseLayer() {
 
 function initMap() {
   mapObj = L.map('map');
+
+  // Create a custom pane for the heat map so it always renders above cluster markers
+  mapObj.createPane('heatPane');
+  mapObj.getPane('heatPane').style.zIndex = 650; // above markerPane (600) and clusters
 
   // Default to satellite — best for pin dropping on houses
   setSatelliteBaseLayer();
@@ -2058,8 +2064,6 @@ function openManagerPanel() {
 function closeManagerPanel() {
   document.getElementById('manager-modal').classList.remove('open');
   clearInterval(mgrAutoRefresh);
-  // Turn off heat map if it was on
-  if (heatMapOn) toggleHeatMap();
 }
 
 // ── Tab switching ─────────────────────────────────────────
@@ -3672,3 +3676,125 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof togglePinDropMode === 'function') togglePinDropMode();
   });
 });
+
+// ──────────────────────────────────────────────────────────
+//  AI COACH — Territory Analysis via Claude API
+// ──────────────────────────────────────────────────────────
+
+function buildTerritoryContext() {
+  var knockable = addresses.filter(isKnockable);
+  var total     = knockable.length;
+  var allTotal  = addresses.length;
+
+  // Status counts
+  var pending  = knockable.filter(function(a){ var s=(a.status||'').toLowerCase(); return !s||s==='pending'||s==='homes passed'; }).length;
+  var sold     = knockable.filter(function(a){ var s=(a.status||'').toLowerCase(); return s==='mega'||s==='gig'; }).length;
+  var mega     = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='mega'; }).length;
+  var gig      = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='gig'; }).length;
+  var nothome  = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='nothome'; }).length;
+  var goback   = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='goback'; }).length;
+  var bspeed   = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='brightspeed'; }).length;
+  var incontr  = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='incontract'; }).length;
+  var notint   = knockable.filter(function(a){ return (a.status||'').toLowerCase()==='notinterested'; }).length;
+  var worked   = knockable.filter(function(a){ var s=(a.status||'').toLowerCase(); return s&&s!=='pending'&&s!=='homes passed'; }).length;
+  var existing = allTotal - total;
+  var closeRate = worked > 0 ? (sold/worked*100).toFixed(1)+'%' : 'N/A';
+
+  // Per-territory breakdown
+  var terrMap = buildTerrMap();
+  var terrLines = Object.keys(terrMap).sort().map(function(t) {
+    var d = terrMap[t];
+    var cr = d.worked > 0 ? (d.sales/d.worked*100).toFixed(1)+'%' : 'N/A';
+    return '  - ' + t + ': ' + d.total + ' homes, ' + d.worked + ' knocked (' + (d.total>0?(d.worked/d.total*100).toFixed(0):'0') + '% coverage), ' + d.sales + ' sales, close rate ' + cr + ', ' + d.pending + ' pending';
+  }).join('\n');
+
+  // Hourly knock data
+  var hourSales = new Array(24).fill(0);
+  var hourKnocks = new Array(24).fill(0);
+  addresses.forEach(function(a) {
+    if (!a.knockedAt) return;
+    var h = new Date(a.knockedAt).getHours();
+    hourKnocks[h]++;
+    if (a.status==='mega'||a.status==='gig') hourSales[h]++;
+  });
+  var hourLines = [];
+  for (var h=7; h<=21; h++) {
+    if (hourKnocks[h] > 0) {
+      var label = h<12 ? h+'am' : h===12 ? '12pm' : (h-12)+'pm';
+      var cr2 = (hourSales[h]/hourKnocks[h]*100).toFixed(1);
+      hourLines.push('  ' + label + ': ' + hourKnocks[h] + ' knocks, ' + hourSales[h] + ' sales (' + cr2 + '% close rate)');
+    }
+  }
+
+  return [
+    '=== ZITOFIBER TERRITORY DATA ===',
+    'Total homes passed: ' + allTotal,
+    'Knockable (non-customer) homes: ' + total,
+    'Existing Zito customers: ' + existing,
+    'Knocked: ' + worked + ' (' + (total>0?(worked/total*100).toFixed(0):'0') + '% of knockable)',
+    'Pending/untouched: ' + pending,
+    'Total sales: ' + sold + ' (Mega: ' + mega + ', Gig: ' + gig + ')',
+    'Close rate: ' + closeRate,
+    'Not home: ' + nothome,
+    'Go back: ' + goback,
+    'Not interested: ' + notint,
+    'Brightspeed customers: ' + bspeed,
+    'In contract: ' + incontr,
+    '',
+    'TERRITORY BREAKDOWN:',
+    terrLines || '  (no territory data)',
+    '',
+    hourLines.length ? 'HOURLY KNOCK DATA:\n' + hourLines.join('\n') : 'HOURLY DATA: No knockedAt timestamps available yet.',
+  ].join('\n');
+}
+
+function runAIQuick(question) {
+  document.getElementById('ai-question-input').value = question;
+  runAIAnalysis();
+}
+
+function runAIAnalysis() {
+  var question = (document.getElementById('ai-question-input').value || '').trim();
+  if (!question) question = 'Give me a complete analysis of the territory and tell me where to focus knocking.';
+
+  var responseEl = document.getElementById('ai-response');
+  responseEl.innerHTML = '<div class="ai-thinking"><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><div class="ai-thinking-dot"></div><span style="margin-left:4px">Analyzing territory data…</span></div>';
+
+  var context = buildTerritoryContext();
+
+  var systemPrompt = 'You are an expert fiber internet sales coach for ZitoFiber. You analyze door-to-door canvassing data and give managers sharp, actionable guidance. Be direct, specific, and practical. Use the territory data provided to give concrete recommendations — reference specific territories, times, and numbers. Keep responses concise but thorough. Format with short paragraphs and use emoji bullets (📍🕐💡🎯🔄) to organize key points.';
+
+  var userMessage = 'Here is our current territory data:\n\n' + context + '\n\n---\n\nQuestion: ' + question;
+
+  fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }]
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) {
+      responseEl.textContent = '⚠️ API error: ' + (data.error.message || JSON.stringify(data.error));
+      return;
+    }
+    var text = (data.content || []).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
+    responseEl.textContent = text || '(No response)';
+  })
+  .catch(function(err) {
+    responseEl.textContent = '⚠️ Request failed: ' + err.message;
+  });
+}
+
+// Trigger AI tab render when switched to
+(function() {
+  var orig = window.switchMgrTab;
+  // Patch after DOM ready
+  document.addEventListener('DOMContentLoaded', function() {
+    // nothing needed — AI tab is always ready, just click Analyze
+  });
+})();
