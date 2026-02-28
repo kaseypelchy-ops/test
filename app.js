@@ -17,7 +17,7 @@ var activeId   = null;
 var selPkg     = null;
 var selStatus  = null;
 var selSlot    = null;
-var webhookURL = 'https://script.google.com/macros/s/AKfycbw_JEW9iF67SNcdrkwH4WER2pVNv8dxTYl5sYd5kh1ioPUeFgyT_0of-VuhQZSIajyB/exec';
+var webhookURL = 'https://script.google.com/macros/s/AKfycbyyqHh3H5qbBxB2fP9dPsymDoreXGwvrjCLT-ROQGBLMjBXKpprt3LWCC2aHbbeovJp/exec';
 var repName    = 'Rep';
 var repPhone   = '';
 var repEmail   = '';
@@ -1708,12 +1708,14 @@ function submitSale(pkgLabel) {
   }
 
   var payload = {
+    type:      'sale',
     territory: (activeTerritory || ''),
     salesperson: repName,
     repPhone: repPhone,
     repEmail: repEmail,
     repWebsite: repWebsite,
     address: addr.address, city: addr.city||'', state: addr.state||'', zip: addr.zip||'',
+    sheetRow: addr.sheetRow || null,
     firstName: first, lastName: last, phone: phone, email: email,
     package: pricingSummary,
     installDate: selSlot ? selSlot.date : (install || ''),
@@ -3730,10 +3732,17 @@ function chatFetch(scrollToBottom) {
     .then(function(r) { return r.json(); })
     .then(function(json) {
       if (!json || !Array.isArray(json.messages)) return;
-      chatMessages = json.messages;
+
+      // Merge: keep any pending/failed optimistic messages not yet on server
+      var serverIds = {};
+      json.messages.forEach(function(m){ serverIds[m.id] = true; });
+      var pending = chatMessages.filter(function(m){
+        return (m.sending || m.failed) && !serverIds[m.id];
+      });
+      chatMessages = json.messages.concat(pending);
 
       // Count unread — messages newer than chatLastSeen not from this rep
-      var newUnread = chatMessages.filter(function(m) {
+      var newUnread = json.messages.filter(function(m) {
         return m.ts > chatLastSeen && m.sender !== repName;
       }).length;
 
@@ -3742,7 +3751,6 @@ function chatFetch(scrollToBottom) {
         chatMarkRead();
         chatRenderOnlineBar(json.online || []);
       } else {
-        // Update unread badge while closed
         chatUnread = newUnread;
         chatUpdateBadge();
         chatRenderOnlineBar(json.online || []);
@@ -3780,7 +3788,7 @@ function chatSend() {
   // Send to sheet
   fetch(webhookURL, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type:      'chat_message',
       sender:    repName,
