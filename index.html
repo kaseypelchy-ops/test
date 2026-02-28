@@ -88,20 +88,9 @@
 
     <div class="step">
       <div class="slabel">Step 1 — Your Name</div>
-      <input class="txt-in" type="text" id="rep-name" placeholder="e.g. John Smith" oninput="validateRepName()">
+      <input class="txt-in" type="text" id="rep-name" placeholder="e.g. John Smith" oninput="validateRepName()" autocomplete="name">
       <div id="rep-name-hint" style="font-size:11px;color:var(--muted);margin-top:6px;font-family:'Space Mono',monospace;display:none;">⚠ Please enter your first and last name</div>
-      <div class="rep-contact-grid">
-        <div>
-          <div class="sublabel">Rep Phone</div>
-          <input class="txt-in" type="tel" id="rep-phone" placeholder="e.g. 814-555-1234">
-        </div>
-        <div>
-          <div class="sublabel">Rep Email</div>
-          <input class="txt-in" type="email" id="rep-email" placeholder="e.g. you@zitomedia.com">
-        </div>
-      </div>
-      <div class="rep-contact-note">These show on your badge and are added to the customer email buttons.</div>
-
+      <div id="rep-profile-status" style="font-size:12px;margin-top:8px;min-height:18px;"></div>
     </div>
 
     <div class="step">
@@ -153,6 +142,7 @@
         <span class="status-dot"></span>
         <span id="tb-status-label">OFFLINE</span>
       </div>
+      <button id="btn-chat" class="tb-btn chat-btn" onclick="openChat()" title="Team Chat">💬 Chat <span id="chat-unread-badge" class="chat-unread-badge" style="display:none"></span></button>
       <button id="btn-manager" class="tb-btn" onclick="openManagerPanel()">Team</button>
       <button class="tb-btn" onclick="openBadge()">My Badge</button>
       <button class="tb-btn" onclick="openSignOutConfirm()" title="Sign out" style="color:#f87171;border-color:rgba(239,68,68,.3);">Log Out</button>
@@ -685,6 +675,43 @@
 <button class="btn-log" onclick="submitStatus()">Log Status (no sale)</button>
 
       </div><!-- end sales-form-body -->
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ TEAM CHAT ═══════════════════ -->
+<div id="chat-modal" onclick="if(event.target===this)closeChat()">
+  <div class="chat-panel">
+    <div class="chat-header">
+      <div class="chat-header-left">
+        <span class="chat-icon">💬</span>
+        <div>
+          <div class="chat-title">Team Chat</div>
+          <div class="chat-online-count" id="chat-online-count">Loading…</div>
+        </div>
+      </div>
+      <button class="chat-close-btn" onclick="closeChat()">✕</button>
+    </div>
+
+    <div class="chat-online-bar" id="chat-online-bar">
+      <!-- online rep avatars injected here -->
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-loading">Loading messages…</div>
+    </div>
+
+    <div class="chat-compose">
+      <input
+        id="chat-input"
+        class="chat-input"
+        type="text"
+        placeholder="Message your team…"
+        maxlength="500"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend();}"
+        autocomplete="off"
+      >
+      <button class="chat-send-btn" onclick="chatSend()">Send</button>
     </div>
   </div>
 </div>

@@ -17,7 +17,7 @@ var activeId   = null;
 var selPkg     = null;
 var selStatus  = null;
 var selSlot    = null;
-var webhookURL = 'https://script.google.com/macros/s/AKfycbyyqHh3H5qbBxB2fP9dPsymDoreXGwvrjCLT-ROQGBLMjBXKpprt3LWCC2aHbbeovJp/exec';
+var webhookURL = 'https://script.google.com/macros/s/AKfycbw_JEW9iF67SNcdrkwH4WER2pVNv8dxTYl5sYd5kh1ioPUeFgyT_0of-VuhQZSIajyB/exec';
 var repName    = 'Rep';
 var repPhone   = '';
 var repEmail   = '';
@@ -282,7 +282,9 @@ function rebuildKmlGeoJSON() {
 function fetchAddressesFromSheet() {
   var btn = document.getElementById('btn-fetch-addr');
   var st  = document.getElementById('fetch-addr-status');
+  var profileSt = document.getElementById('rep-profile-status');
   var repInput = (document.getElementById('rep-name') ? (document.getElementById('rep-name').value || '').trim() : '');
+
   if (!repInput || repInput.split(/\s+/).filter(function(p){ return p.length > 0; }).length < 2) {
     st.className = 'dz-status err';
     st.textContent = '✗ Enter your full name first (First Last).';
@@ -292,9 +294,9 @@ function fetchAddressesFromSheet() {
   btn.disabled = true;
   document.getElementById('fetch-addr-icon').textContent = '⏳';
   st.className = 'dz-status';
-  st.textContent = 'Loading addresses…';
+  st.textContent = 'Loading…';
+  if (profileSt) { profileSt.style.color = 'var(--muted)'; profileSt.textContent = ''; }
 
-  // Let the backend know this is a manager so it returns ALL territories
   var managerFlag = MANAGER_NAMES.indexOf(repInput.toLowerCase()) >= 0 ? '&isManager=true' : '';
   fetch(webhookURL + '?action=addresses&repName=' + encodeURIComponent(repInput) + managerFlag + '&_t=' + Date.now())
     .then(function(r){ return r.json(); })
@@ -302,59 +304,48 @@ function fetchAddressesFromSheet() {
       if (!json || !json.rows) throw new Error('Bad response from server');
       if (json.status === 'error') throw new Error(json.message || 'Server error');
 
-  activeTerritory = (json.territory || '').trim();
+      activeTerritory = (json.territory || '').trim();
 
-addresses = json.rows.map(function(row, i) {
-  var lat = (row.lat !== '' && row.lat != null) ? parseFloat(row.lat) : null;
-  var lng = (row.lng !== '' && row.lng != null) ? parseFloat(row.lng) : null;
+      // Populate rep profile from Reps sheet
+      if (json.repPhone) {
+        repPhone = json.repPhone;
+        try { localStorage.setItem('zito_rep_phone', repPhone); } catch(e) {}
+      }
+      if (json.repEmail) {
+        repEmail = json.repEmail;
+        try { localStorage.setItem('zito_rep_email', repEmail); } catch(e) {}
+      }
+      if (profileSt && (json.repPhone || json.repEmail)) {
+        profileSt.style.color = '#10b981';
+        profileSt.textContent = '✓ Profile loaded' +
+          (json.repPhone ? ' • ' + json.repPhone : '') +
+          (json.repEmail ? ' • ' + json.repEmail : '');
+      }
 
-  return {
-    id:           i,
-    sheetRow:     row.sheetRow,
-    territory:    (row.territory || activeTerritory || '').trim(),
-    address:      (row.address || '').trim(),
-    city:         (row.city || '').trim(),
-    state:        (row.state || '').trim(),
-    zip:          (row.zip || '').trim(),
+      addresses = json.rows.map(function(row, i) {
+        var lat = (row.lat !== '' && row.lat != null) ? parseFloat(row.lat) : null;
+        var lng = (row.lng !== '' && row.lng != null) ? parseFloat(row.lng) : null;
+        return {
+          id:          i,
+          sheetRow:    row.sheetRow,
+          territory:   (row.territory || activeTerritory || '').trim(),
+          address:     (row.address || '').trim(),
+          city:        (row.city || '').trim(),
+          state:       (row.state || '').trim(),
+          zip:         (row.zip || '').trim(),
+          lat:         (isFinite(lat) ? lat : null),
+          lng:         (isFinite(lng) ? lng : null),
+          activeCount: (row.activeCount || row.active_count || row.type || '').toString().trim(),
+          status:      (row.status || 'pending').toLowerCase(),
+          salesperson: (row.salesperson || '').trim(),
+          note:        (row.note || row.dispositionNote || row.disposition_note || '').toString().trim(),
+          knockedAt:   (row.knockedAt || row.knocked_at || null),
+          sale:        null
+        };
+      });
 
-    lat:          (isFinite(lat) ? lat : null),
-    lng:          (isFinite(lng) ? lng : null),
-
-    activeCount:  (row.activeCount || row.active_count || row.type || '').toString().trim(),
-    status:       (row.status || 'pending').toLowerCase(),
-    salesperson:  (row.salesperson || '').trim(),
-
-    // ✅ IMPORTANT: bring note over from Apps Script
-    note:         (row.note || row.dispositionNote || row.disposition_note || '').toString().trim(),
-
-    knockedAt:    (row.knockedAt || row.knocked_at || null),
-    sale:         null
-  };
-});
-
-// ✅ These are the missing pieces that make sidebar + map update immediately
-updateStats();
-buildList();
-refreshMapMarkers(); // if you have this helper; otherwise use the fallback below
-
-// Fallback if you DO NOT have refreshMapMarkers():
-// if (mapObj) {
-//   // clear old markers if you track them
-//   if (mapMarkers) {
-//     Object.keys(mapMarkers).forEach(function(k){
-//       try { mapObj.removeLayer(mapMarkers[k]); } catch(e) {}
-//     });
-//     mapMarkers = {};
-//   }
-//   addresses.forEach(function(a){ if (a.lat != null && a.lng != null) placeMarker(a); });
-// }
-
-st.className   = 'dz-status ok';
-st.textContent = '✓ ' + addresses.length + ' addresses loaded' + (activeTerritory ? (' • ' + activeTerritory) : '');
-document.getElementById('fetch-addr-icon').textContent = '✅';
-btn.disabled = false;
-checkLaunchReady();
-
+      updateStats();
+      buildList();
       st.className   = 'dz-status ok';
       st.textContent = '✓ ' + addresses.length + ' addresses loaded' + (activeTerritory ? (' • ' + activeTerritory) : '');
       document.getElementById('fetch-addr-icon').textContent = '✅';
@@ -366,6 +357,7 @@ checkLaunchReady();
       st.textContent = '✗ ' + (err && err.message ? err.message : 'Unable to load addresses');
       document.getElementById('fetch-addr-icon').textContent = '📋';
       btn.disabled = false;
+      if (profileSt) { profileSt.textContent = ''; }
     });
 }
 
@@ -444,13 +436,12 @@ function startPolling() {
 }
 function launchApp() {
   repName = (document.getElementById('rep-name').value || '').trim();
-  repPhone = (document.getElementById('rep-phone') ? (document.getElementById('rep-phone').value || '').trim() : '');
-  repEmail = (document.getElementById('rep-email') ? (document.getElementById('rep-email').value || '').trim() : '');
+  // repPhone and repEmail are populated by fetchAddressesFromSheet from the Reps sheet
 
   try {
     localStorage.setItem('zito_rep_name', repName);
-    localStorage.setItem('zito_rep_phone', repPhone);
-    localStorage.setItem('zito_rep_email', repEmail);
+    if (repPhone) localStorage.setItem('zito_rep_phone', repPhone);
+    if (repEmail) localStorage.setItem('zito_rep_email', repEmail);
     if (!localStorage.getItem('fieldos_session_start')) {
       localStorage.setItem('fieldos_session_start', new Date().toISOString());
     }
@@ -480,6 +471,7 @@ function launchApp() {
     startPolling();
     maybeAutoCollapse();
     initBadge();
+    chatInit();     // start team chat
     // Ask for GPS permission right after launch so Route Mode is ready to go
     startGPSPing();
     // Managers land on the team dashboard automatically
@@ -1934,13 +1926,14 @@ function confirmSignOut() {
     selStatus = null;
     selSlot   = null;
     clearInterval(pollTimer);
+    chatStopPolling();
     if (mapObj) { mapObj.remove(); mapObj = null; }
 
     document.getElementById('page-app').style.display   = 'none';
     document.getElementById('page-setup').style.display = 'flex';
     document.getElementById('rep-name').value = '';
-    if (document.getElementById('rep-phone')) document.getElementById('rep-phone').value = '';
-    if (document.getElementById('rep-email')) document.getElementById('rep-email').value = '';
+    repPhone = '';
+    repEmail = '';
     try { localStorage.removeItem('zito_rep_name'); localStorage.removeItem('zito_rep_phone'); localStorage.removeItem('zito_rep_email'); } catch(e) {}
     document.getElementById('launch-btn').disabled = true;
     document.getElementById('fetch-addr-status').textContent = '';
@@ -1955,9 +1948,10 @@ function restoreRepProfile() {
     var n = localStorage.getItem('zito_rep_name')  || '';
     var p = localStorage.getItem('zito_rep_phone') || '';
     var e = localStorage.getItem('zito_rep_email') || '';
-    if (n && document.getElementById('rep-name'))  document.getElementById('rep-name').value  = n;
-    if (document.getElementById('rep-phone')) document.getElementById('rep-phone').value = p;
-    if (document.getElementById('rep-email')) document.getElementById('rep-email').value = e;
+    if (n && document.getElementById('rep-name')) document.getElementById('rep-name').value = n;
+    // Restore cached phone/email (populated from sheet on last session)
+    if (p) repPhone = p;
+    if (e) repEmail = e;
   } catch(err) {}
 }
 
@@ -3678,3 +3672,275 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // (AI Coach removed)
+
+// ══════════════════════════════════════════════════════════
+//  TEAM CHAT
+//  Messages stored in Google Sheet "Chat" tab via webhook.
+//  Polls every 5 seconds when chat is open, 30s when closed.
+//  Shows online rep avatars, unread badge, timestamps.
+// ══════════════════════════════════════════════════════════
+
+var CHAT_POLL_OPEN   = 5000;   // poll interval when chat panel is open
+var CHAT_POLL_CLOSED = 30000;  // poll interval when chat is closed
+var chatOpen         = false;
+var chatPollTimer    = null;
+var chatMessages     = [];     // full message cache
+var chatLastSeen     = 0;      // timestamp of last read message
+var chatUnread       = 0;
+var chatOnlineReps   = [];     // latest online rep list
+
+// ── Open / Close ──────────────────────────────────────────
+function openChat() {
+  chatOpen = true;
+  document.getElementById('chat-modal').classList.add('open');
+  chatMarkRead();
+  chatFetch(true);
+  chatRestartPoll();
+  setTimeout(function() {
+    var inp = document.getElementById('chat-input');
+    if (inp) inp.focus();
+  }, 200);
+}
+
+function closeChat() {
+  chatOpen = false;
+  document.getElementById('chat-modal').classList.remove('open');
+  chatMarkRead();
+  chatRestartPoll();
+}
+
+// ── Polling ───────────────────────────────────────────────
+function chatStartPolling() {
+  chatRestartPoll();
+}
+
+function chatRestartPoll() {
+  if (chatPollTimer) clearInterval(chatPollTimer);
+  var interval = chatOpen ? CHAT_POLL_OPEN : CHAT_POLL_CLOSED;
+  chatPollTimer = setInterval(function() { chatFetch(false); }, interval);
+}
+
+function chatStopPolling() {
+  if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
+}
+
+// ── Fetch messages from sheet ─────────────────────────────
+function chatFetch(scrollToBottom) {
+  fetch(webhookURL + '?action=chatMessages&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(json) {
+      if (!json || !Array.isArray(json.messages)) return;
+      chatMessages = json.messages;
+
+      // Count unread — messages newer than chatLastSeen not from this rep
+      var newUnread = chatMessages.filter(function(m) {
+        return m.ts > chatLastSeen && m.sender !== repName;
+      }).length;
+
+      if (chatOpen) {
+        chatRenderMessages(scrollToBottom || newUnread > 0);
+        chatMarkRead();
+        chatRenderOnlineBar(json.online || []);
+      } else {
+        // Update unread badge while closed
+        chatUnread = newUnread;
+        chatUpdateBadge();
+        chatRenderOnlineBar(json.online || []);
+      }
+    })
+    .catch(function() {}); // silent fail — don't disrupt the app
+}
+
+// ── Send message ──────────────────────────────────────────
+function chatSend() {
+  var inp = document.getElementById('chat-input');
+  if (!inp) return;
+  var text = inp.value.trim();
+  if (!text) return;
+  if (!repName || repName === 'Rep') {
+    toast('⚠ Sign in first to chat', 't-err');
+    return;
+  }
+
+  inp.value = '';
+  inp.focus();
+
+  // Optimistic local render
+  var tempMsg = {
+    id:       'tmp-' + Date.now(),
+    sender:   repName,
+    territory: activeTerritory || '',
+    text:     text,
+    ts:       Date.now(),
+    sending:  true
+  };
+  chatMessages.push(tempMsg);
+  chatRenderMessages(true);
+
+  // Send to sheet
+  fetch(webhookURL, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type:      'chat_message',
+      sender:    repName,
+      territory: activeTerritory || '',
+      text:      text,
+      ts:        Date.now()
+    })
+  })
+  .then(function() {
+    // Replace temp message on next poll
+    chatFetch(false);
+  })
+  .catch(function() {
+    // Mark as failed
+    var idx = chatMessages.findIndex(function(m){ return m.id === tempMsg.id; });
+    if (idx >= 0) chatMessages[idx].failed = true;
+    chatRenderMessages(false);
+  });
+}
+
+// ── Render messages ───────────────────────────────────────
+function chatRenderMessages(scrollToBottom) {
+  var container = document.getElementById('chat-messages');
+  if (!container) return;
+
+  if (chatMessages.length === 0) {
+    container.innerHTML = '<div class="chat-empty">No messages yet.<br>Say hello to your team! 👋</div>';
+    return;
+  }
+
+  var html = '';
+  var lastDate = '';
+  var lastSender = '';
+
+  chatMessages.forEach(function(m, i) {
+    var isMine  = m.sender === repName;
+    var msgDate = m.ts ? new Date(m.ts).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'}) : '';
+    var msgTime = m.ts ? new Date(m.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    var isNew   = m.ts > chatLastSeen && !isMine;
+
+    // Date divider
+    if (msgDate && msgDate !== lastDate) {
+      html += '<div class="chat-date-divider"><span>' + escHtml(msgDate) + '</span></div>';
+      lastDate   = msgDate;
+      lastSender = '';
+    }
+
+    // Group consecutive messages from same sender
+    var showHeader = !isMine && m.sender !== lastSender;
+    lastSender = m.sender;
+
+    var initials = (m.sender || '?').split(' ').map(function(p){ return p[0]; }).join('').substring(0,2).toUpperCase();
+    var avatarColor = chatAvatarColor(m.sender);
+    var statusMark  = m.sending ? ' <span class="chat-sending">⏳</span>' : m.failed ? ' <span class="chat-failed">✗ Failed</span>' : '';
+    var newMark     = isNew ? ' chat-msg-new' : '';
+
+    if (isMine) {
+      html += '<div class="chat-row chat-row-mine' + newMark + '">' +
+        '<div class="chat-bubble chat-bubble-mine">' +
+          escHtml(m.text) + statusMark +
+          '<span class="chat-time">' + msgTime + '</span>' +
+        '</div>' +
+      '</div>';
+    } else {
+      html += '<div class="chat-row' + newMark + '">';
+      if (showHeader) {
+        html += '<div class="chat-avatar" style="background:' + avatarColor + '">' + escHtml(initials) + '</div>' +
+          '<div class="chat-sender-wrap">' +
+            '<div class="chat-sender-name">' + escHtml(m.sender) +
+              (m.territory ? ' <span class="chat-terr">· ' + escHtml(m.territory) + '</span>' : '') +
+            '</div>';
+      } else {
+        html += '<div class="chat-avatar-spacer"></div><div class="chat-sender-wrap">';
+      }
+      html += '<div class="chat-bubble">' + escHtml(m.text) +
+        '<span class="chat-time">' + msgTime + '</span>' +
+      '</div></div></div>';
+    }
+  });
+
+  container.innerHTML = html;
+
+  if (scrollToBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+// ── Online reps bar ───────────────────────────────────────
+function chatRenderOnlineBar(onlineReps) {
+  chatOnlineReps = onlineReps;
+  var bar = document.getElementById('chat-online-bar');
+  var countEl = document.getElementById('chat-online-count');
+  if (!bar) return;
+
+  var count = onlineReps.length;
+  if (countEl) {
+    countEl.textContent = count > 0
+      ? count + ' rep' + (count === 1 ? '' : 's') + ' online'
+      : 'No reps currently online';
+  }
+
+  if (count === 0) {
+    bar.innerHTML = '<span class="chat-no-online">All reps are offline</span>';
+    return;
+  }
+
+  bar.innerHTML = onlineReps.map(function(rep) {
+    var initials = (rep.name || '?').split(' ').map(function(p){ return p[0]; }).join('').substring(0,2).toUpperCase();
+    var color    = chatAvatarColor(rep.name);
+    var isMe     = rep.name === repName;
+    return '<div class="chat-online-rep" title="' + escHtml(rep.name) + (rep.territory ? ' · ' + rep.territory : '') + '">' +
+      '<div class="chat-mini-avatar' + (isMe ? ' chat-mini-me' : '') + '" style="background:' + color + '">' +
+        escHtml(initials) +
+        '<span class="chat-online-dot"></span>' +
+      '</div>' +
+      '<span class="chat-rep-label">' + escHtml(rep.name.split(' ')[0]) + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+// ── Unread badge ──────────────────────────────────────────
+function chatUpdateBadge() {
+  var badge = document.getElementById('chat-unread-badge');
+  if (!badge) return;
+  if (chatUnread > 0) {
+    badge.textContent = chatUnread > 9 ? '9+' : chatUnread;
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function chatMarkRead() {
+  chatLastSeen = Date.now();
+  chatUnread   = 0;
+  chatUpdateBadge();
+  try { localStorage.setItem('fieldos_chat_last_seen', chatLastSeen); } catch(e) {}
+}
+
+// ── Avatar color (deterministic per name) ─────────────────
+function chatAvatarColor(name) {
+  var palette = [
+    '#005696','#0d9488','#8b5cf6','#f59e0b',
+    '#ef4444','#10b981','#6366f1','#ec4899',
+    '#14b8a6','#f97316'
+  ];
+  var hash = 0;
+  for (var i = 0; i < (name||'').length; i++) hash += (name||'').charCodeAt(i);
+  return palette[hash % palette.length];
+}
+
+// ── Init ──────────────────────────────────────────────────
+function chatInit() {
+  // Restore last-seen timestamp
+  try {
+    var saved = localStorage.getItem('fieldos_chat_last_seen');
+    if (saved) chatLastSeen = parseInt(saved, 10);
+  } catch(e) {}
+  chatStartPolling();
+  // Initial fetch for badge
+  chatFetch(false);
+}
+
