@@ -432,7 +432,7 @@ function startPolling() {
         }
       })
       .catch(function(){});
-  }, 30000);
+  }, 10000);
 }
 function launchApp() {
   repName = (document.getElementById('rep-name').value || '').trim();
@@ -471,7 +471,6 @@ function launchApp() {
     startPolling();
     maybeAutoCollapse();
     initBadge();
-    chatInit();     // start team chat
     // Ask for GPS permission right after launch so Route Mode is ready to go
     startGPSPing();
     // Managers land on the team dashboard automatically
@@ -1708,14 +1707,12 @@ function submitSale(pkgLabel) {
   }
 
   var payload = {
-    type:      'sale',
     territory: (activeTerritory || ''),
     salesperson: repName,
     repPhone: repPhone,
     repEmail: repEmail,
     repWebsite: repWebsite,
     address: addr.address, city: addr.city||'', state: addr.state||'', zip: addr.zip||'',
-    sheetRow: addr.sheetRow || null,
     firstName: first, lastName: last, phone: phone, email: email,
     package: pricingSummary,
     installDate: selSlot ? selSlot.date : (install || ''),
@@ -1928,7 +1925,6 @@ function confirmSignOut() {
     selStatus = null;
     selSlot   = null;
     clearInterval(pollTimer);
-    chatStopPolling();
     if (mapObj) { mapObj.remove(); mapObj = null; }
 
     document.getElementById('page-app').style.display   = 'none';
@@ -2055,7 +2051,7 @@ function openManagerPanel() {
   document.getElementById('manager-modal').classList.add('open');
   switchMgrTab('team', document.querySelector('.mgr-tab'));
   refreshManagerPanel();
-  mgrAutoRefresh = setInterval(refreshManagerPanel, 30000);
+  mgrAutoRefresh = setInterval(refreshManagerPanel, 10000);
 }
 function closeManagerPanel() {
   document.getElementById('manager-modal').classList.remove('open');
@@ -3677,278 +3673,262 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ══════════════════════════════════════════════════════════
 //  TEAM CHAT
-//  Messages stored in Google Sheet "Chat" tab via webhook.
-//  Polls every 5 seconds when chat is open, 30s when closed.
-//  Shows online rep avatars, unread badge, timestamps.
 // ══════════════════════════════════════════════════════════
+//
+//  Backend: Google Apps Script — same webhookURL.
+//  Add these handlers to your Apps Script doGet / doPost:
+//
+//  doGet  ?action=getChat&since=ISO_TIMESTAMP  → {messages:[…]}
+//  doPost type:"chat_message", sender, text, ts → {result:"ok"}
+//
+//  Each message row in the "Chat" sheet:
+//    Col A: Timestamp (ISO)   Col B: Sender   Col C: Message
+//
+// ──────────────────────────────────────────────────────────
 
-var CHAT_POLL_OPEN   = 5000;   // poll interval when chat panel is open
-var CHAT_POLL_CLOSED = 30000;  // poll interval when chat is closed
-var chatOpen         = false;
-var chatPollTimer    = null;
-var chatMessages     = [];     // full message cache
-var chatLastSeen     = 0;      // timestamp of last read message
-var chatUnread       = 0;
-var chatOnlineReps   = [];     // latest online rep list
+var chatOpen          = false;
+var chatMessages      = [];      // full local cache of messages
+var chatLastTS        = null;    // last seen timestamp for polling delta
+var chatPollTimer     = null;
+var chatUnreadCount   = 0;
+var chatSending       = false;
 
-// ── Open / Close ──────────────────────────────────────────
+var CHAT_POLL_OPEN    = 5000;    // 5 s while panel is visible
+var CHAT_POLL_CLOSED  = 30000;   // 30 s background badge refresh
+
+// ── Open / close ───────────────────────────────────────────
 function openChat() {
-  chatOpen = true;
   document.getElementById('chat-modal').classList.add('open');
-  chatMarkRead();
-  chatFetch(true);
-  chatRestartPoll();
-  setTimeout(function() {
-    var inp = document.getElementById('chat-input');
-    if (inp) inp.focus();
-  }, 200);
+  chatOpen = true;
+  chatUnreadCount = 0;
+  updateChatBadge();
+  renderChatMessages();
+  if (chatMessages.length === 0) fetchChatMessages(true);
+  startChatPoll();
+  setTimeout(scrollChatBottom, 60);
+  document.getElementById('chat-input').focus();
 }
 
 function closeChat() {
-  chatOpen = false;
   document.getElementById('chat-modal').classList.remove('open');
-  chatMarkRead();
-  chatRestartPoll();
+  chatOpen = false;
+  stopChatPoll();
+  startChatPoll();  // restart at slow (background) rate
 }
 
-// ── Polling ───────────────────────────────────────────────
-function chatStartPolling() {
-  chatRestartPoll();
-}
-
-function chatRestartPoll() {
-  if (chatPollTimer) clearInterval(chatPollTimer);
+// ── Polling ────────────────────────────────────────────────
+function startChatPoll() {
+  stopChatPoll();
   var interval = chatOpen ? CHAT_POLL_OPEN : CHAT_POLL_CLOSED;
-  chatPollTimer = setInterval(function() { chatFetch(false); }, interval);
+  chatPollTimer = setInterval(function() {
+    fetchChatMessages(false);
+  }, interval);
 }
 
-function chatStopPolling() {
+function stopChatPoll() {
   if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
 }
 
 // ── Fetch messages from sheet ─────────────────────────────
-function chatFetch(scrollToBottom) {
-  fetch(webhookURL + '?action=chatMessages&_t=' + Date.now())
+function fetchChatMessages(isInitial) {
+  if (!webhookURL) return;
+  var url = webhookURL + '?action=getChat&_t=' + Date.now();
+  if (!isInitial && chatLastTS) {
+    url += '&since=' + encodeURIComponent(chatLastTS);
+  }
+  fetch(url)
     .then(function(r) { return r.json(); })
-    .then(function(json) {
-      if (!json || !Array.isArray(json.messages)) return;
-
-      // Merge: keep any pending/failed optimistic messages not yet on server
-      var serverIds = {};
-      json.messages.forEach(function(m){ serverIds[m.id] = true; });
-      var pending = chatMessages.filter(function(m){
-        return (m.sending || m.failed) && !serverIds[m.id];
-      });
-      chatMessages = json.messages.concat(pending);
-
-      // Count unread — messages newer than chatLastSeen not from this rep
-      var newUnread = json.messages.filter(function(m) {
-        return m.ts > chatLastSeen && m.sender !== repName;
-      }).length;
-
-      if (chatOpen) {
-        chatRenderMessages(scrollToBottom || newUnread > 0);
-        chatMarkRead();
-        chatRenderOnlineBar(json.online || []);
+    .then(function(data) {
+      var msgs = data.messages || [];
+      if (msgs.length === 0) {
+        if (isInitial) renderChatMessages();
+        return;
+      }
+      var wasAtBottom = isChatScrolledToBottom();
+      if (isInitial) {
+        chatMessages = msgs;
       } else {
-        chatUnread = newUnread;
-        chatUpdateBadge();
-        chatRenderOnlineBar(json.online || []);
+        // Merge — avoid duplicates by timestamp+sender key
+        msgs.forEach(function(m) {
+          var key = m.ts + '|' + m.sender;
+          var exists = chatMessages.some(function(x){ return (x.ts+'|'+x.sender) === key; });
+          if (!exists) {
+            chatMessages.push(m);
+            if (!chatOpen) chatUnreadCount++;
+          }
+        });
+        chatMessages.sort(function(a,b){ return a.ts < b.ts ? -1 : 1; });
+      }
+      // Track newest timestamp for delta polling
+      if (chatMessages.length) {
+        chatLastTS = chatMessages[chatMessages.length - 1].ts;
+      }
+      updateChatBadge();
+      if (chatOpen) {
+        renderChatMessages();
+        if (wasAtBottom || isInitial) scrollChatBottom();
       }
     })
-    .catch(function() {}); // silent fail — don't disrupt the app
+    .catch(function() {
+      // Network failure — silently skip, try again next poll
+    });
 }
 
-// ── Send message ──────────────────────────────────────────
-function chatSend() {
-  var inp = document.getElementById('chat-input');
-  if (!inp) return;
-  var text = inp.value.trim();
+// ── Send a message ─────────────────────────────────────────
+function sendChatMessage() {
+  if (chatSending) return;
+  var input = document.getElementById('chat-input');
+  var text  = (input.value || '').trim();
   if (!text) return;
-  if (!repName || repName === 'Rep') {
-    toast('⚠ Sign in first to chat', 't-err');
-    return;
-  }
+  if (!webhookURL) { toast('⚠ No webhook configured', 't-err'); return; }
 
-  inp.value = '';
-  inp.focus();
+  var ts   = new Date().toISOString();
+  var name = repName || 'Rep';
 
-  // Optimistic local render
-  var tempMsg = {
-    id:       'tmp-' + Date.now(),
-    sender:   repName,
-    territory: activeTerritory || '',
-    text:     text,
-    ts:       Date.now(),
-    sending:  true
-  };
-  chatMessages.push(tempMsg);
-  chatRenderMessages(true);
+  // Optimistic UI — add immediately
+  var optimistic = { ts: ts, sender: name, text: text, _pending: true };
+  chatMessages.push(optimistic);
+  chatLastTS = ts;
+  renderChatMessages();
+  scrollChatBottom();
+  input.value = '';
 
-  // Send to sheet
+  chatSending = true;
+  var sendBtn = document.querySelector('.chat-send-btn');
+  if (sendBtn) sendBtn.disabled = true;
+
   fetch(webhookURL, {
     method:  'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({
-      type:      'chat_message',
-      sender:    repName,
-      territory: activeTerritory || '',
-      text:      text,
-      ts:        Date.now()
+    mode:    'no-cors',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      type:   'chat_message',
+      sender: name,
+      text:   text,
+      ts:     ts
     })
   })
   .then(function() {
-    // Replace temp message on next poll
-    chatFetch(false);
+    // Mark no longer pending
+    chatMessages.forEach(function(m) {
+      if (m._pending && m.ts === ts && m.sender === name) delete m._pending;
+    });
+    renderChatMessages();
   })
   .catch(function() {
-    // Mark as failed
-    var idx = chatMessages.findIndex(function(m){ return m.id === tempMsg.id; });
-    if (idx >= 0) chatMessages[idx].failed = true;
-    chatRenderMessages(false);
+    toast('⚠ Message failed to send', 't-err');
+    // Remove optimistic message on error
+    chatMessages = chatMessages.filter(function(m){
+      return !(m._pending && m.ts === ts && m.sender === name);
+    });
+    renderChatMessages();
+    input.value = text;  // restore text so they can retry
+  })
+  .finally(function() {
+    chatSending = false;
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
   });
 }
 
-// ── Render messages ───────────────────────────────────────
-function chatRenderMessages(scrollToBottom) {
-  var container = document.getElementById('chat-messages');
-  if (!container) return;
+// ── Render messages ────────────────────────────────────────
+function renderChatMessages() {
+  var el = document.getElementById('chat-messages');
+  if (!el) return;
 
   if (chatMessages.length === 0) {
-    container.innerHTML = '<div class="chat-empty">No messages yet.<br>Say hello to your team! 👋</div>';
+    el.innerHTML =
+      '<div class="chat-empty">' +
+        '<div class="chat-empty-icon">💬</div>' +
+        'No messages yet. Say hello to the team!' +
+      '</div>';
+    updateChatSubtitle();
     return;
   }
 
-  var html = '';
-  var lastDate = '';
-  var lastSender = '';
+  var myName     = repName || 'Rep';
+  var html       = '';
+  var lastDateStr = '';
 
-  chatMessages.forEach(function(m, i) {
-    var isMine  = m.sender === repName;
-    var msgDate = m.ts ? new Date(m.ts).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'}) : '';
-    var msgTime = m.ts ? new Date(m.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
-    var isNew   = m.ts > chatLastSeen && !isMine;
+  chatMessages.forEach(function(m) {
+    var isMine  = m.sender === myName;
+    var msgDate = new Date(m.ts);
+    var dateStr = msgDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    var timeStr = msgDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    var today   = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    var displayDate = (dateStr === today) ? 'Today' : dateStr;
 
-    // Date divider
-    if (msgDate && msgDate !== lastDate) {
-      html += '<div class="chat-date-divider"><span>' + escHtml(msgDate) + '</span></div>';
-      lastDate   = msgDate;
-      lastSender = '';
+    if (dateStr !== lastDateStr) {
+      html += '<div class="chat-date-sep">' + displayDate + '</div>';
+      lastDateStr = dateStr;
     }
 
-    // Group consecutive messages from same sender
-    var showHeader = !isMine && m.sender !== lastSender;
-    lastSender = m.sender;
-
-    var initials = (m.sender || '?').split(' ').map(function(p){ return p[0]; }).join('').substring(0,2).toUpperCase();
-    var avatarColor = chatAvatarColor(m.sender);
-    var statusMark  = m.sending ? ' <span class="chat-sending">⏳</span>' : m.failed ? ' <span class="chat-failed">✗ Failed</span>' : '';
-    var newMark     = isNew ? ' chat-msg-new' : '';
-
-    if (isMine) {
-      html += '<div class="chat-row chat-row-mine' + newMark + '">' +
-        '<div class="chat-bubble chat-bubble-mine">' +
-          escHtml(m.text) + statusMark +
-          '<span class="chat-time">' + msgTime + '</span>' +
-        '</div>' +
-      '</div>';
-    } else {
-      html += '<div class="chat-row' + newMark + '">';
-      if (showHeader) {
-        html += '<div class="chat-avatar" style="background:' + avatarColor + '">' + escHtml(initials) + '</div>' +
-          '<div class="chat-sender-wrap">' +
-            '<div class="chat-sender-name">' + escHtml(m.sender) +
-              (m.territory ? ' <span class="chat-terr">· ' + escHtml(m.territory) + '</span>' : '') +
-            '</div>';
-      } else {
-        html += '<div class="chat-avatar-spacer"></div><div class="chat-sender-wrap">';
-      }
-      html += '<div class="chat-bubble">' + escHtml(m.text) +
-        '<span class="chat-time">' + msgTime + '</span>' +
-      '</div></div></div>';
-    }
+    html += '<div class="chat-msg ' + (isMine ? 'mine' : 'theirs') + '">' +
+      '<div class="chat-msg-meta">' +
+        (isMine ? '' : '<span class="chat-msg-sender">' + esc(m.sender) + '</span> · ') +
+        '<span>' + timeStr + '</span>' +
+        (m._pending ? ' · <span style="opacity:.5">sending…</span>' : '') +
+      '</div>' +
+      '<div class="chat-bubble">' + esc(m.text) + '</div>' +
+    '</div>';
   });
 
-  container.innerHTML = html;
-
-  if (scrollToBottom) {
-    container.scrollTop = container.scrollHeight;
-  }
+  el.innerHTML = html;
+  updateChatSubtitle();
 }
 
-// ── Online reps bar ───────────────────────────────────────
-function chatRenderOnlineBar(onlineReps) {
-  chatOnlineReps = onlineReps;
-  var bar = document.getElementById('chat-online-bar');
-  var countEl = document.getElementById('chat-online-count');
-  if (!bar) return;
-
-  var count = onlineReps.length;
-  if (countEl) {
-    countEl.textContent = count > 0
-      ? count + ' rep' + (count === 1 ? '' : 's') + ' online'
-      : 'No reps currently online';
-  }
-
-  if (count === 0) {
-    bar.innerHTML = '<span class="chat-no-online">All reps are offline</span>';
-    return;
-  }
-
-  bar.innerHTML = onlineReps.map(function(rep) {
-    var initials = (rep.name || '?').split(' ').map(function(p){ return p[0]; }).join('').substring(0,2).toUpperCase();
-    var color    = chatAvatarColor(rep.name);
-    var isMe     = rep.name === repName;
-    return '<div class="chat-online-rep" title="' + escHtml(rep.name) + (rep.territory ? ' · ' + rep.territory : '') + '">' +
-      '<div class="chat-mini-avatar' + (isMe ? ' chat-mini-me' : '') + '" style="background:' + color + '">' +
-        escHtml(initials) +
-        '<span class="chat-online-dot"></span>' +
-      '</div>' +
-      '<span class="chat-rep-label">' + escHtml(rep.name.split(' ')[0]) + '</span>' +
-    '</div>';
-  }).join('');
+function updateChatSubtitle() {
+  var el = document.getElementById('chat-subtitle');
+  if (!el) return;
+  var n = chatMessages.length;
+  el.textContent = n === 0 ? 'Be the first to message' : n + ' message' + (n === 1 ? '' : 's');
 }
 
-// ── Unread badge ──────────────────────────────────────────
-function chatUpdateBadge() {
+function updateChatBadge() {
   var badge = document.getElementById('chat-unread-badge');
   if (!badge) return;
-  if (chatUnread > 0) {
-    badge.textContent = chatUnread > 9 ? '9+' : chatUnread;
-    badge.style.display = 'inline-block';
+  if (chatUnreadCount > 0) {
+    badge.textContent = chatUnreadCount > 99 ? '99+' : String(chatUnreadCount);
+    badge.classList.remove('hidden');
   } else {
-    badge.style.display = 'none';
+    badge.classList.add('hidden');
   }
 }
 
-function chatMarkRead() {
-  chatLastSeen = Date.now();
-  chatUnread   = 0;
-  chatUpdateBadge();
-  try { localStorage.setItem('fieldos_chat_last_seen', chatLastSeen); } catch(e) {}
+function isChatScrolledToBottom() {
+  var el = document.getElementById('chat-messages');
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
 }
 
-// ── Avatar color (deterministic per name) ─────────────────
-function chatAvatarColor(name) {
-  var palette = [
-    '#005696','#0d9488','#8b5cf6','#f59e0b',
-    '#ef4444','#10b981','#6366f1','#ec4899',
-    '#14b8a6','#f97316'
-  ];
-  var hash = 0;
-  for (var i = 0; i < (name||'').length; i++) hash += (name||'').charCodeAt(i);
-  return palette[hash % palette.length];
+function scrollChatBottom() {
+  var el = document.getElementById('chat-messages');
+  if (el) el.scrollTop = el.scrollHeight;
 }
 
-// ── Init ──────────────────────────────────────────────────
-function chatInit() {
-  // Restore last-seen timestamp
-  try {
-    var saved = localStorage.getItem('fieldos_chat_last_seen');
-    if (saved) chatLastSeen = parseInt(saved, 10);
-  } catch(e) {}
-  chatStartPolling();
-  // Initial fetch for badge
-  chatFetch(false);
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
+// ── Boot: start background polling once rep is set ─────────
+// Called from launchApp() flow — hook into existing DOMContentLoaded
+document.addEventListener('DOMContentLoaded', function() {
+  // Delay start until repName is likely set (after launch)
+  // We watch for the app page to become visible
+  var observer = new MutationObserver(function() {
+    var appPage = document.getElementById('page-app');
+    if (appPage && appPage.style.display !== 'none' && appPage.style.display !== '') {
+      observer.disconnect();
+      setTimeout(function() {
+        fetchChatMessages(true);
+        startChatPoll();
+      }, 2000);
+    }
+  });
+  var appPage = document.getElementById('page-app');
+  if (appPage) observer.observe(appPage, { attributes: true, attributeFilter: ['style', 'class'] });
+});
