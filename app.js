@@ -964,7 +964,7 @@ function geocodeAll() {
     fetch(webhookURL, {
       method: 'POST',
       mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({
         type:     'save_coords',
         sheetRow: a.sheetRow,
@@ -1562,7 +1562,7 @@ function schedBookSlot(date, time, customerName, address) {
   fetch(SCHED_URL, {
     method: 'POST',
     mode: 'no-cors',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ type:'booking', date:date, time:time, name:customerName, address:address })
   }).catch(function(){});
 
@@ -1652,7 +1652,7 @@ function maybeWriteNewAddrToSheet(addr) {
   fetch(webhookURL, {
     method: 'POST',
     mode: 'no-cors',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type:      'add_address',
       address:   addr.address,
@@ -1783,7 +1783,7 @@ function updateAddressStatus(addr, status, note) {
   fetch(webhookURL, {
     method: 'POST',
     mode: 'no-cors',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type:            'status_update',
       territory:       (addr.territory || activeTerritory || ''),
@@ -1806,7 +1806,7 @@ function sendData(payload) {
   fetch(webhookURL, {
     method: 'POST',
     mode: 'no-cors',
-    headers: { 'Content-Type':'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload)
   }).catch(function() {});
 }
@@ -1873,7 +1873,7 @@ function sendHeartbeat(statusOverride) {
   try { firstSeen = localStorage.getItem('fieldos_session_start') || ''; } catch(e) {}
   fetch(webhookURL, {
     method: 'POST', mode: 'no-cors',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type:        'rep_heartbeat',
       salesperson: repName,
@@ -3301,7 +3301,7 @@ function pingNearbyAddresses() {
 
   fetch(webhookURL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
       type: 'rep_location',
       repName: repName,
@@ -3768,10 +3768,11 @@ function sendChatMessage() {
   var sendBtn = document.querySelector('.chat-send-btn');
   if (sendBtn) sendBtn.disabled = true;
 
-  // NOTE: no mode:'no-cors' — we need the response to confirm the write
+  // Using text/plain avoids the CORS preflight that blocks application/json
+  // Apps Script receives the body identically via e.postData.contents either way
   fetch(webhookURL, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body:    JSON.stringify({ type: 'chat_message', sender: name, text: text, ts: ts })
   })
   .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -3783,12 +3784,17 @@ function sendChatMessage() {
       renderChatMessages();
       setTimeout(function() { fetchChatMessages(false); }, 500);
     } else {
-      throw new Error(data && data.msg ? data.msg : 'Unknown error');
+      throw new Error(data && data.msg ? data.msg : 'Apps Script returned: ' + JSON.stringify(data));
     }
   })
   .catch(function(err) {
     console.error('[Chat] Send failed:', err);
-    toast('⚠ Message not saved — check Apps Script', 't-err');
+    var errMsg = String(err.message || err);
+    if (errMsg.indexOf('Chat sheet not found') >= 0) {
+      toast('⚠ Run setupChatSheet() in Apps Script first', 't-err');
+    } else {
+      toast('⚠ ' + errMsg.substring(0, 60), 't-err');
+    }
     chatMessages = chatMessages.filter(function(m) {
       return !(m._pending && m.ts === ts && m.sender === name);
     });
