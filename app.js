@@ -8,8 +8,8 @@
 // ──────────────────────────────────────────────────────────
 var APP_NAME    = 'Zito FieldOS';
 var APP_TAGLINE = 'Field Operations & Sales Intelligence';
-var APP_VERSION = '1.0.3';
-var BUILD_ID    = '2026.02.22';
+var APP_VERSION = '2.0.1';
+var BUILD_ID    = '2026.03.03';
 var APP_ENV     = 'Production';
 
 var addresses  = [];
@@ -4237,8 +4237,31 @@ function runAIAnalysis() {
       var rawText = apiResult.content && apiResult.content[0] && apiResult.content[0].text
         ? apiResult.content[0].text.trim() : '';
       if (!rawText) throw new Error('Empty response from Claude.');
+      // Strip markdown fences
       rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-      var analysis = JSON.parse(rawText);
+
+      // Extract just the JSON object if there's surrounding text
+      var braceStart = rawText.indexOf('{');
+      var braceEnd   = rawText.lastIndexOf('}');
+      if (braceStart > 0 || (braceEnd > 0 && braceEnd < rawText.length - 1)) {
+        rawText = rawText.substring(braceStart, braceEnd + 1);
+      }
+
+      var analysis;
+      try {
+        analysis = JSON.parse(rawText);
+      } catch (parseErr) {
+        // Claude occasionally uses single-quoted keys or trailing commas — fix and retry
+        var fixed = rawText
+          .replace(/,\s*([}\]])/g, '$1')                          // trailing commas
+          .replace(/([{,]\s*)'([^']+)'(\s*:)/g, '$1"$2"$3')      // single-quoted keys
+          .replace(/:\s*'([^']*)'/g, ': "$1"');                   // single-quoted string values
+        try {
+          analysis = JSON.parse(fixed);
+        } catch (e2) {
+          throw new Error('Could not parse Claude response as JSON. Raw: ' + rawText.substring(0, 120));
+        }
+      }
       aiLastResult = { status: 'ok', analysis: analysis };
       renderAIResult(aiLastResult);
       var ts = document.getElementById('ai-timestamp');
