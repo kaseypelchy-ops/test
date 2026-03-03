@@ -397,6 +397,19 @@
       <!-- ── TAB: AI ANALYSIS ── -->
       <div id="mgr-tab-ai" class="mgr-tab-panel">
 
+        <!-- API Key row -->
+        <div class="ai-key-row" id="ai-key-row">
+          <div class="ai-key-label">Anthropic API Key</div>
+          <div class="ai-key-input-wrap">
+            <input class="ai-key-input" id="ai-key-input" type="password"
+              placeholder="sk-ant-api03-…"
+              oninput="aiKeySave()"
+              autocomplete="off" spellcheck="false">
+            <button class="ai-key-toggle" onclick="aiKeyToggle()" title="Show/hide key">👁</button>
+          </div>
+          <div class="ai-key-hint" id="ai-key-hint">Saved in your browser only — never sent to the sheet</div>
+        </div>
+
         <div class="ai-hero-card">
           <div class="ai-hero-left">
             <div class="ai-hero-title">🤖 Field Intelligence Briefing</div>
@@ -414,7 +427,7 @@
         <div id="ai-output" class="ai-output-idle">
           <div class="ai-output-placeholder">
             <div class="ai-placeholder-icon">🧠</div>
-            <div>Hit <strong>Run Analysis</strong> to get a live briefing based on today's field data.<br>
+            <div>Enter your API key above, then hit <strong>Run Analysis</strong>.<br>
             Takes about 10–15 seconds.</div>
           </div>
         </div>

@@ -3891,12 +3891,35 @@ document.addEventListener('DOMContentLoaded', function() {
 var aiLastResult = null;   // cache last result so tab re-opens instantly
 
 function renderAITab() {
-  // Show context pills with what data is available
-  renderAIContextPills();
-  // If we already have a cached result, show it immediately
-  if (aiLastResult) {
-    renderAIResult(aiLastResult);
+  // Load saved key into the input
+  var saved = localStorage.getItem('fieldos_ai_key') || '';
+  var input = document.getElementById('ai-key-input');
+  if (input && saved) {
+    input.value = saved;
+    var hint = document.getElementById('ai-key-hint');
+    if (hint) { hint.textContent = '✓ Key saved in this browser'; hint.className = 'ai-key-hint saved'; }
   }
+  renderAIContextPills();
+  if (aiLastResult) renderAIResult(aiLastResult);
+}
+
+function aiKeySave() {
+  var input = document.getElementById('ai-key-input');
+  var hint  = document.getElementById('ai-key-hint');
+  if (!input) return;
+  var val = input.value.trim();
+  if (val) {
+    localStorage.setItem('fieldos_ai_key', val);
+    if (hint) { hint.textContent = '✓ Key saved in this browser'; hint.className = 'ai-key-hint saved'; }
+  } else {
+    localStorage.removeItem('fieldos_ai_key');
+    if (hint) { hint.textContent = 'Saved in your browser only — never sent to the sheet'; hint.className = 'ai-key-hint'; }
+  }
+}
+
+function aiKeyToggle() {
+  var input = document.getElementById('ai-key-input');
+  if (input) input.type = (input.type === 'password') ? 'text' : 'password';
 }
 
 function renderAIContextPills() {
@@ -4040,20 +4063,22 @@ function buildAIPayload() {
 
 // ── Run the analysis ───────────────────────────────────────
 function runAIAnalysis() {
-  var btn   = document.getElementById('ai-run-btn');
-  var label = document.getElementById('ai-run-btn-label');
+  var btn    = document.getElementById('ai-run-btn');
+  var label  = document.getElementById('ai-run-btn-label');
   var output = document.getElementById('ai-output');
 
-  // ── Helper: reset button state ──────────────────────────
-  function resetBtn(btnLabel) {
+  function resetBtn(txt) {
     if (btn)   btn.disabled = false;
-    if (label) label.textContent = btnLabel || '↻ Re-run Analysis';
+    if (label) label.textContent = txt || '↻ Re-run Analysis';
   }
 
-  console.log('[AI] runAIAnalysis called. webhookURL =', webhookURL);
+  // ── Get API key ────────────────────────────────────────
+  var apiKey = (document.getElementById('ai-key-input') || {}).value;
+  if (!apiKey) apiKey = localStorage.getItem('fieldos_ai_key') || '';
+  apiKey = apiKey.trim();
 
-  if (!webhookURL) {
-    renderAIError('No webhook URL configured. Set up your Google Apps Script first.');
+  if (!apiKey) {
+    renderAIError('Enter your Anthropic API key in the field above first.');
     return;
   }
 
@@ -4084,47 +4109,111 @@ function runAIAnalysis() {
     if (el) el.textContent = steps[stepIdx];
   }, 1800);
 
-  // ── Build payload (wrap in try/catch — a crash here would ──
-  // ── otherwise leave the UI in a permanent loading state) ──
+  // ── Build payload ──────────────────────────────────────
   var payload;
   try {
     payload = buildAIPayload();
-    console.log('[AI] Payload built. Territories:', payload.territories.length, 'Homes:', payload.summary.totalKnockableHomes);
   } catch (buildErr) {
     clearInterval(stepTimer);
-    console.error('[AI] buildAIPayload threw:', buildErr);
     renderAIError('Failed to build data payload: ' + buildErr.message);
     resetBtn('▶ Run Analysis');
     return;
   }
 
-  // ── 45-second timeout via AbortController ──────────────
-  // Apps Script calls the Anthropic API — it can take 15–30 s.
-  // Without a timeout, a hung request looks like "nothing happening".
-  var controller = new AbortController();
-  var timeoutId  = setTimeout(function() {
-    console.warn('[AI] Fetch timed out after 45 s');
-    controller.abort();
-  }, 45000);
+  // ── Assemble prompt ────────────────────────────────────
+  var s = payload.summary || {};
+  var summaryLines = [
+    'Total knockable homes: '          + s.totalKnockableHomes,
+    'Total knocked: '                  + s.totalKnocked,
+    'Pending (untouched): '            + s.totalPending,
+    'Total sales today: '              + s.totalSales + ' (' + s.megaSales + ' Mega, ' + s.gigSales + ' Gig)',
+    'Global close rate: '              + s.globalCloseRatePct + '%',
+    'Gig mix: '                        + s.gigMixPct + '%',
+    'Current MRR: $'                   + s.currentMRR,
+    'Projected full-territory MRR: $'  + s.projectedMRR,
+    'Projected additional sales: '     + s.projectedAdditionalSales,
+    'Open follow-up contacts: '        + s.totalFollowUps,
+    'Online reps: '                    + s.onlineReps + ' of ' + s.totalReps
+  ].join('\n');
 
-  fetch(webhookURL, {
+  var terrLines = (payload.territories || []).map(function(t) {
+    return '  • ' + t.name + ': ' + t.coveragePct + '% coverage, ' +
+      t.closeRatePct + '% close rate, ' + t.sales + ' sales, ' + t.pending + ' pending | ' +
+      'Brightspeed=' + t.brightspeed + ' InContract=' + t.inContract +
+      ' NotHome=' + t.notHome + ' GoBack=' + t.goBack;
+  }).join('\n') || '  No territory data';
+
+  var repLines = (payload.reps || []).map(function(r) {
+    return '  • ' + r.name + ' [' + (r.online ? 'ONLINE' : 'offline') + '] — ' + r.sales;
+  }).join('\n') || '  No rep data';
+
+  var followUpLines = Object.keys(payload.followUpsByTerritory || {}).map(function(t) {
+    var f = payload.followUpsByTerritory[t];
+    return '  • ' + t + ': ' + f.goBack + ' Go Back, ' + f.notHome + ' Not Home';
+  }).join('\n') || '  None';
+
+  var systemPrompt =
+    'You are a field sales operations analyst for Zito Media, a fiber internet company. ' +
+    'You receive real-time door-knocking data and produce a concise, actionable daily briefing for the sales manager. ' +
+    'Be direct and specific. Use exact numbers. Avoid generic advice. ' +
+    'Prioritize actions by urgency and revenue impact. ' +
+    'Gig Speed ($54.95/mo) is higher value than Mega Speed ($44.95/mo). ' +
+    'Respond ONLY with a valid JSON object — no markdown fences, no preamble. ' +
+    'Schema:\n' +
+    '{\n' +
+    '  "headline": "one punchy sentence",\n' +
+    '  "situation": "2-3 sentences on where things stand",\n' +
+    '  "metrics": [{"label":"Close Rate","value":"12%"}, {"label":"Gig Mix","value":"43%"}, {"label":"Proj. MRR","value":"$4,820"}],\n' +
+    '  "recommendations": [{"priority":"high|medium|low","territory":"name or null","action":"specific action","reasoning":"why, citing data"}],\n' +
+    '  "insights": [{"icon":"📊","text":"insight"}],\n' +
+    '  "repCoaching": [{"rep":"Name","note":"specific note"}],\n' +
+    '  "todaysFocus": "one paragraph: the single most important thing right now"\n' +
+    '}';
+
+  var userPrompt =
+    '── OVERALL SUMMARY ──\n' + summaryLines +
+    '\n\n── TERRITORY BREAKDOWN ──\n' + terrLines +
+    '\n\n── REP STATUS ──\n' + repLines +
+    '\n\n── FOLLOW-UP QUEUE ──\n' + followUpLines +
+    '\n\nProduce the JSON briefing now.';
+
+  // ── Call Anthropic directly ────────────────────────────
+  var controller = new AbortController();
+  var timeoutId  = setTimeout(function() { controller.abort(); }, 45000);
+
+  fetch('https://api.anthropic.com/v1/messages', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
     signal:  controller.signal,
-    body:    JSON.stringify({ type: 'ai_analysis', payload: payload })
+    headers: {
+      'Content-Type':      'application/json',
+      'x-api-key':         apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model:      'claude-opus-4-6',
+      max_tokens: 1500,
+      system:     systemPrompt,
+      messages:   [{ role: 'user', content: userPrompt }]
+    })
   })
   .then(function(r) {
     clearTimeout(timeoutId);
-    console.log('[AI] Apps Script responded, HTTP', r.status);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) return r.text().then(function(t) { throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 200)); });
     return r.json();
   })
-  .then(function(data) {
+  .then(function(apiResult) {
     clearInterval(stepTimer);
-    console.log('[AI] Response data:', JSON.stringify(data).substring(0, 200));
-    if (data.status === 'error') throw new Error(data.message || 'Analysis failed');
-    aiLastResult = data;
-    renderAIResult(data);
+    var rawText = apiResult.content && apiResult.content[0] && apiResult.content[0].text
+      ? apiResult.content[0].text.trim() : '';
+    if (!rawText) throw new Error('Empty response from Claude.');
+
+    // Strip any accidental markdown fences
+    rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    var analysis = JSON.parse(rawText);
+
+    aiLastResult = { status: 'ok', analysis: analysis };
+    renderAIResult(aiLastResult);
     var ts = document.getElementById('ai-timestamp');
     if (ts) ts.textContent = 'Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   })
@@ -4132,10 +4221,9 @@ function runAIAnalysis() {
     clearInterval(stepTimer);
     clearTimeout(timeoutId);
     var msg = err.name === 'AbortError'
-      ? 'Request timed out after 45 s. Apps Script may be slow or the Anthropic API key may not be set in Script Properties.'
-      : 'Error: ' + err.message;
-    console.error('[AI] Fetch failed:', err);
-    renderAIError(msg + ' — Open the browser console (F12) for details.');
+      ? 'Request timed out after 45 s. Check your API key and try again.'
+      : err.message;
+    renderAIError(msg);
   })
   .finally(function() {
     resetBtn('↻ Re-run Analysis');
