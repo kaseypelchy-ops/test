@@ -4040,18 +4040,27 @@ function buildAIPayload() {
 
 // ── Run the analysis ───────────────────────────────────────
 function runAIAnalysis() {
+  var btn   = document.getElementById('ai-run-btn');
+  var label = document.getElementById('ai-run-btn-label');
+  var output = document.getElementById('ai-output');
+
+  // ── Helper: reset button state ──────────────────────────
+  function resetBtn(btnLabel) {
+    if (btn)   btn.disabled = false;
+    if (label) label.textContent = btnLabel || '↻ Re-run Analysis';
+  }
+
+  console.log('[AI] runAIAnalysis called. webhookURL =', webhookURL);
+
   if (!webhookURL) {
     renderAIError('No webhook URL configured. Set up your Google Apps Script first.');
     return;
   }
 
-  var btn   = document.getElementById('ai-run-btn');
-  var label = document.getElementById('ai-run-btn-label');
+  // ── Disable button & show loading ──────────────────────
   if (btn)   btn.disabled = true;
   if (label) label.textContent = '⏳ Analysing…';
 
-  // Show loading state
-  var output = document.getElementById('ai-output');
   if (output) {
     output.className = 'ai-output-loading';
     output.innerHTML =
@@ -4060,7 +4069,6 @@ function runAIAnalysis() {
       '<div class="ai-loading-steps" id="ai-loading-step">Building territory snapshot</div>';
   }
 
-  // Animate loading steps
   var steps = [
     'Building territory snapshot',
     'Computing close rates & coverage',
@@ -4076,36 +4084,61 @@ function runAIAnalysis() {
     if (el) el.textContent = steps[stepIdx];
   }, 1800);
 
-  var payload = buildAIPayload();
+  // ── Build payload (wrap in try/catch — a crash here would ──
+  // ── otherwise leave the UI in a permanent loading state) ──
+  var payload;
+  try {
+    payload = buildAIPayload();
+    console.log('[AI] Payload built. Territories:', payload.territories.length, 'Homes:', payload.summary.totalKnockableHomes);
+  } catch (buildErr) {
+    clearInterval(stepTimer);
+    console.error('[AI] buildAIPayload threw:', buildErr);
+    renderAIError('Failed to build data payload: ' + buildErr.message);
+    resetBtn('▶ Run Analysis');
+    return;
+  }
+
+  // ── 45-second timeout via AbortController ──────────────
+  // Apps Script calls the Anthropic API — it can take 15–30 s.
+  // Without a timeout, a hung request looks like "nothing happening".
+  var controller = new AbortController();
+  var timeoutId  = setTimeout(function() {
+    console.warn('[AI] Fetch timed out after 45 s');
+    controller.abort();
+  }, 45000);
 
   fetch(webhookURL, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      type:    'ai_analysis',
-      payload: payload
-    })
+    signal:  controller.signal,
+    body:    JSON.stringify({ type: 'ai_analysis', payload: payload })
   })
   .then(function(r) {
+    clearTimeout(timeoutId);
+    console.log('[AI] Apps Script responded, HTTP', r.status);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   })
   .then(function(data) {
     clearInterval(stepTimer);
+    console.log('[AI] Response data:', JSON.stringify(data).substring(0, 200));
     if (data.status === 'error') throw new Error(data.message || 'Analysis failed');
     aiLastResult = data;
     renderAIResult(data);
-
     var ts = document.getElementById('ai-timestamp');
     if (ts) ts.textContent = 'Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   })
   .catch(function(err) {
     clearInterval(stepTimer);
-    renderAIError('Analysis failed: ' + err.message + '. Check that handleAIAnalysis() is deployed in your Apps Script and your Anthropic API key is set.');
+    clearTimeout(timeoutId);
+    var msg = err.name === 'AbortError'
+      ? 'Request timed out after 45 s. Apps Script may be slow or the Anthropic API key may not be set in Script Properties.'
+      : 'Error: ' + err.message;
+    console.error('[AI] Fetch failed:', err);
+    renderAIError(msg + ' — Open the browser console (F12) for details.');
   })
   .finally(function() {
-    if (btn)   btn.disabled = false;
-    if (label) label.textContent = '↻ Re-run Analysis';
+    resetBtn('↻ Re-run Analysis');
   });
 }
 
@@ -4207,5 +4240,6 @@ function renderAIError(msg) {
   if (output) {
     output.className = 'ai-output-active';
     output.innerHTML = '<div class="ai-error-box">⚠ ' + escHtml(msg) + '</div>';
+    output.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
