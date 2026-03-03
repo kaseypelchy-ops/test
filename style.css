@@ -839,13 +839,11 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
 @media (min-width: 700px) {
   .mgr-summary { grid-template-columns: repeat(3, 1fr); }
   .mgr-perf-grid { grid-template-columns: repeat(4, 1fr); }
-  .mgr-tab { font-size: 12px; padding: 9px 14px; }
-  .mgr-tabs { gap: 6px; }
+  .mgr-tab { font-size: 12px; padding: 10px 8px; }
   .ana-card { padding: 20px 22px; }
   .ana-card-head { font-size: 14px; }
   .mgr-header { padding: 22px 26px; }
   .mgr-title { font-size: 24px; }
-  /* Side-by-side cards where it makes sense */
   .mgr-two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1698,19 +1696,15 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
 
 /* ── Tab nav ─────────────────────────────────────────────── */
 .mgr-tabs {
-  display: flex;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 5px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
-.mgr-tabs::-webkit-scrollbar { display: none; }
 .mgr-tab {
-  flex: 0 0 auto;
   background: transparent;
   border: none;
   border-radius: 8px;
@@ -1718,10 +1712,11 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   font-family: 'Syne', sans-serif;
   font-weight: 700;
   font-size: 11px;
-  padding: 8px 4px;
+  padding: 8px 6px;
   cursor: pointer;
   transition: all .15s;
   white-space: nowrap;
+  text-align: center;
 }
 .mgr-tab:hover { color: var(--text); }
 .mgr-tab.active {
@@ -2551,31 +2546,61 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   .mgr-summary { margin: 12px 14px 0; }
   .mgr-perf { margin: 12px 14px 0; }
 
-  /* Tabs: scrollable pill strip */
+  /* Tabs: 2-row × 3-col grid — all 6 tabs always visible */
   .mgr-tabs {
-    margin: 12px 14px 0;
-    gap: 6px;
-    padding: 5px 6px;
+    margin: 10px 14px 0;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+    padding: 5px;
     border-radius: 14px;
   }
   .mgr-tab {
     font-size: 11px;
-    padding: 8px 10px;
+    padding: 9px 4px;
     white-space: nowrap;
-    flex: 0 0 auto;
     border-radius: 10px;
+    /* Show emoji above label on two lines */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1.2;
   }
+
+  /* Split emoji from text so emoji sits on its own line */
+  .mgr-tab .tab-emoji  { font-size: 16px; }
+  .mgr-tab .tab-label  { font-size: 9px; letter-spacing: .01em; }
 
   /* All tab panels: padded sides */
   .mgr-tab-panel {
-    padding: 12px 14px 0;
+    padding: 10px 14px 0;
     gap: 10px;
   }
 
   /* Cards: tighter, full-width */
-  .ana-card { padding: 14px 14px; border-radius: 14px; }
-  .ana-card-head { font-size: 13px; }
-  .ana-card-sub { font-size: 10px; margin-bottom: 10px; }
+  .ana-card { padding: 14px 12px; border-radius: 12px; }
+  .ana-card-head { font-size: 12px; }
+  .ana-card-sub  { font-size: 9px; margin-bottom: 10px; }
+
+  /* AI tab: stack hero card, shrink key row */
+  .ai-key-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .ai-key-input-wrap { width: 100%; }
+  .ai-hero-card { flex-direction: column; gap: 10px; }
+  .ai-run-btn   { width: 100%; padding: 12px; font-size: 13px; }
+  .ai-summary-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .ai-summary-val  { font-size: 16px; }
+  .ai-summary-lbl  { font-size: 8px; }
+  .ai-rec-card     { padding: 10px 12px; }
+  .ai-rec-action   { font-size: 12px; }
+  .ai-rec-detail   { font-size: 11px; }
+  .ai-insight-row  { font-size: 11.5px; }
+  .ai-hero-title   { font-size: 13px; }
+  .ai-hero-sub     { font-size: 10px; }
 
   /* Close button: full-width sticky at bottom */
   .mgr-close-btn {
@@ -2697,7 +2722,9 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
 
 /* ── Ultra-small phones (≤ 380px) ─────────────────────── */
 @media (max-width: 380px) {
-  .mgr-tab { font-size: 10px; padding: 7px 8px; }
+  .mgr-tab { font-size: 10px; padding: 7px 3px; }
+  .mgr-tab .tab-emoji { font-size: 14px; }
+  .mgr-tab .tab-label { font-size: 8px; }
   .mgr-title { font-size: 15px; }
   .ti-comp-col { width: 40px; }
   .ti-comp-bar-wrap { width: 40px; }
@@ -2706,6 +2733,7 @@ body { font-family: 'Syne', sans-serif; color: var(--text); background: var(--bg
   .comp-pill-val { font-size: 16px; }
   .setup-card { padding: 18px 14px; }
   .gps-prompt-icon { font-size: 30px; }
+  .ai-summary-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ── iPhone notch / Dynamic Island safe areas ────────── */
