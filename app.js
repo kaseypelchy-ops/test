@@ -3317,6 +3317,10 @@ function pingNearbyAddresses() {
 
     activeTerritory = (json.territory || '').trim();
 
+    // If GPS radius returned no rows, the rep is just not near any addresses
+    // right now — keep the existing loaded addresses rather than wiping them.
+    if (!json.rows || json.rows.length === 0) return;
+
     // ── Snapshot current rep-set dispositions before overwriting ──
     // This ensures that a sale/no-sale the rep already logged (on ANY address,
     // imported or manually added) is not wiped out by the next GPS refresh.
