@@ -2070,6 +2070,7 @@ function switchMgrTab(tab, btn) {
   if (tab === 'coverage')  renderCoverageTab();
   if (tab === 'forecast')  renderForecastTab();
   if (tab === 'territory') renderTerritoryTab();
+  if (tab === 'ai')        renderAITab();
 }
 function refreshManagerPanel() {
   var btn = document.getElementById('mgr-refresh-btn');
@@ -3674,29 +3675,21 @@ document.addEventListener('DOMContentLoaded', function() {
 // ══════════════════════════════════════════════════════════
 //  TEAM CHAT
 // ══════════════════════════════════════════════════════════
-//
-//  Backend: Google Apps Script — same webhookURL.
-//  Add these handlers to your Apps Script doGet / doPost:
-//
-//  doGet  ?action=getChat&since=ISO_TIMESTAMP  → {messages:[…]}
-//  doPost type:"chat_message", sender, text, ts → {result:"ok"}
-//
-//  Each message row in the "Chat" sheet:
-//    Col A: Timestamp (ISO)   Col B: Sender   Col C: Message
-//
+//  GET  ?action=getChat&since=ISO_TIMESTAMP  → {messages:[…]}
+//  POST { type:'chat_message', sender, text, ts } → {result:'ok'}
+//  Chat tab in Google Sheet: Col A=Timestamp, B=Sender, C=Message
 // ──────────────────────────────────────────────────────────
 
-var chatOpen          = false;
-var chatMessages      = [];      // full local cache of messages
-var chatLastTS        = null;    // last seen timestamp for polling delta
-var chatPollTimer     = null;
-var chatUnreadCount   = 0;
-var chatSending       = false;
+var chatOpen        = false;
+var chatMessages    = [];
+var chatLastTS      = null;
+var chatPollTimer   = null;
+var chatUnreadCount = 0;
+var chatSending     = false;
 
-var CHAT_POLL_OPEN    = 5000;    // 5 s while panel is visible
-var CHAT_POLL_CLOSED  = 30000;   // 30 s background badge refresh
+var CHAT_POLL_OPEN   = 5000;   // poll every 5 s while panel is visible
+var CHAT_POLL_CLOSED = 30000;  // poll every 30 s in background
 
-// ── Open / close ───────────────────────────────────────────
 function openChat() {
   document.getElementById('chat-modal').classList.add('open');
   chatOpen = true;
@@ -3705,7 +3698,7 @@ function openChat() {
   renderChatMessages();
   if (chatMessages.length === 0) fetchChatMessages(true);
   startChatPoll();
-  setTimeout(scrollChatBottom, 60);
+  setTimeout(scrollChatBottom, 80);
   document.getElementById('chat-input').focus();
 }
 
@@ -3713,68 +3706,47 @@ function closeChat() {
   document.getElementById('chat-modal').classList.remove('open');
   chatOpen = false;
   stopChatPoll();
-  startChatPoll();  // restart at slow (background) rate
+  startChatPoll(); // restart at slow background rate
 }
 
-// ── Polling ────────────────────────────────────────────────
 function startChatPoll() {
   stopChatPoll();
   var interval = chatOpen ? CHAT_POLL_OPEN : CHAT_POLL_CLOSED;
-  chatPollTimer = setInterval(function() {
-    fetchChatMessages(false);
-  }, interval);
+  chatPollTimer = setInterval(function() { fetchChatMessages(false); }, interval);
 }
-
 function stopChatPoll() {
   if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
 }
 
-// ── Fetch messages from sheet ─────────────────────────────
 function fetchChatMessages(isInitial) {
   if (!webhookURL) return;
   var url = webhookURL + '?action=getChat&_t=' + Date.now();
-  if (!isInitial && chatLastTS) {
-    url += '&since=' + encodeURIComponent(chatLastTS);
-  }
+  if (!isInitial && chatLastTS) url += '&since=' + encodeURIComponent(chatLastTS);
+
   fetch(url)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var msgs = data.messages || [];
-      if (msgs.length === 0) {
-        if (isInitial) renderChatMessages();
-        return;
-      }
+      if (msgs.length === 0) { if (isInitial) renderChatMessages(); return; }
+
       var wasAtBottom = isChatScrolledToBottom();
       if (isInitial) {
         chatMessages = msgs;
       } else {
-        // Merge — avoid duplicates by timestamp+sender key
         msgs.forEach(function(m) {
           var key = m.ts + '|' + m.sender;
-          var exists = chatMessages.some(function(x){ return (x.ts+'|'+x.sender) === key; });
-          if (!exists) {
-            chatMessages.push(m);
-            if (!chatOpen) chatUnreadCount++;
-          }
+          var exists = chatMessages.some(function(x) { return (x.ts + '|' + x.sender) === key; });
+          if (!exists) { chatMessages.push(m); if (!chatOpen) chatUnreadCount++; }
         });
-        chatMessages.sort(function(a,b){ return a.ts < b.ts ? -1 : 1; });
+        chatMessages.sort(function(a, b) { return a.ts < b.ts ? -1 : 1; });
       }
-      // Track newest timestamp for delta polling
-      if (chatMessages.length) {
-        chatLastTS = chatMessages[chatMessages.length - 1].ts;
-      }
+      if (chatMessages.length) chatLastTS = chatMessages[chatMessages.length - 1].ts;
       updateChatBadge();
-      if (chatOpen) {
-        renderChatMessages();
-        if (wasAtBottom || isInitial) scrollChatBottom();
-      }
+      if (chatOpen) { renderChatMessages(); if (wasAtBottom || isInitial) scrollChatBottom(); }
     })
-    .catch(function() {
-      // Network failure — silently skip, try again next poll
-    });
+    .catch(function() {}); // silently retry next poll
 }
 
-// ── Send a message ─────────────────────────────────────────
 function sendChatMessage() {
   if (chatSending) return;
   var input = document.getElementById('chat-input');
@@ -3785,9 +3757,8 @@ function sendChatMessage() {
   var ts   = new Date().toISOString();
   var name = repName || 'Rep';
 
-  // Optimistic UI — add immediately
-  var optimistic = { ts: ts, sender: name, text: text, _pending: true };
-  chatMessages.push(optimistic);
+  // Optimistic UI
+  chatMessages.push({ ts: ts, sender: name, text: text, _pending: true });
   chatLastTS = ts;
   renderChatMessages();
   scrollChatBottom();
@@ -3797,32 +3768,32 @@ function sendChatMessage() {
   var sendBtn = document.querySelector('.chat-send-btn');
   if (sendBtn) sendBtn.disabled = true;
 
+  // NOTE: no mode:'no-cors' — we need the response to confirm the write
   fetch(webhookURL, {
     method:  'POST',
-    mode:    'no-cors',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      type:   'chat_message',
-      sender: name,
-      text:   text,
-      ts:     ts
-    })
+    body:    JSON.stringify({ type: 'chat_message', sender: name, text: text, ts: ts })
   })
-  .then(function() {
-    // Mark no longer pending
-    chatMessages.forEach(function(m) {
-      if (m._pending && m.ts === ts && m.sender === name) delete m._pending;
-    });
-    renderChatMessages();
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(data) {
+    if (data && data.result === 'ok') {
+      chatMessages.forEach(function(m) {
+        if (m._pending && m.ts === ts && m.sender === name) delete m._pending;
+      });
+      renderChatMessages();
+      setTimeout(function() { fetchChatMessages(false); }, 500);
+    } else {
+      throw new Error(data && data.msg ? data.msg : 'Unknown error');
+    }
   })
-  .catch(function() {
-    toast('⚠ Message failed to send', 't-err');
-    // Remove optimistic message on error
-    chatMessages = chatMessages.filter(function(m){
+  .catch(function(err) {
+    console.error('[Chat] Send failed:', err);
+    toast('⚠ Message not saved — check Apps Script', 't-err');
+    chatMessages = chatMessages.filter(function(m) {
       return !(m._pending && m.ts === ts && m.sender === name);
     });
     renderChatMessages();
-    input.value = text;  // restore text so they can retry
+    input.value = text;
   })
   .finally(function() {
     chatSending = false;
@@ -3831,23 +3802,20 @@ function sendChatMessage() {
   });
 }
 
-// ── Render messages ────────────────────────────────────────
 function renderChatMessages() {
   var el = document.getElementById('chat-messages');
   if (!el) return;
 
   if (chatMessages.length === 0) {
     el.innerHTML =
-      '<div class="chat-empty">' +
-        '<div class="chat-empty-icon">💬</div>' +
-        'No messages yet. Say hello to the team!' +
-      '</div>';
+      '<div class="chat-empty"><div class="chat-empty-icon">💬</div>' +
+      'No messages yet. Say hello to the team!</div>';
     updateChatSubtitle();
     return;
   }
 
-  var myName     = repName || 'Rep';
-  var html       = '';
+  var myName      = repName || 'Rep';
+  var html        = '';
   var lastDateStr = '';
 
   chatMessages.forEach(function(m) {
@@ -3856,20 +3824,19 @@ function renderChatMessages() {
     var dateStr = msgDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     var timeStr = msgDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     var today   = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    var displayDate = (dateStr === today) ? 'Today' : dateStr;
 
     if (dateStr !== lastDateStr) {
-      html += '<div class="chat-date-sep">' + displayDate + '</div>';
+      html += '<div class="chat-date-sep">' + (dateStr === today ? 'Today' : dateStr) + '</div>';
       lastDateStr = dateStr;
     }
 
     html += '<div class="chat-msg ' + (isMine ? 'mine' : 'theirs') + '">' +
       '<div class="chat-msg-meta">' +
-        (isMine ? '' : '<span class="chat-msg-sender">' + esc(m.sender) + '</span> · ') +
+        (isMine ? '' : '<span class="chat-msg-sender">' + escHtml(m.sender) + '</span> · ') +
         '<span>' + timeStr + '</span>' +
         (m._pending ? ' · <span style="opacity:.5">sending…</span>' : '') +
       '</div>' +
-      '<div class="chat-bubble">' + esc(m.text) + '</div>' +
+      '<div class="chat-bubble">' + escHtml(m.text) + '</div>' +
     '</div>';
   });
 
@@ -3897,38 +3864,348 @@ function updateChatBadge() {
 
 function isChatScrolledToBottom() {
   var el = document.getElementById('chat-messages');
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  return el ? (el.scrollHeight - el.scrollTop - el.clientHeight < 60) : true;
 }
-
 function scrollChatBottom() {
   var el = document.getElementById('chat-messages');
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-function esc(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ── Boot: start background polling once rep is set ─────────
-// Called from launchApp() flow — hook into existing DOMContentLoaded
+// Start background polling once the app page is live
 document.addEventListener('DOMContentLoaded', function() {
-  // Delay start until repName is likely set (after launch)
-  // We watch for the app page to become visible
   var observer = new MutationObserver(function() {
     var appPage = document.getElementById('page-app');
     if (appPage && appPage.style.display !== 'none' && appPage.style.display !== '') {
       observer.disconnect();
-      setTimeout(function() {
-        fetchChatMessages(true);
-        startChatPoll();
-      }, 2000);
+      setTimeout(function() { fetchChatMessages(true); startChatPoll(); }, 2000);
     }
   });
   var appPage = document.getElementById('page-app');
   if (appPage) observer.observe(appPage, { attributes: true, attributeFilter: ['style', 'class'] });
 });
+
+// ══════════════════════════════════════════════════════════
+//  AI FIELD ANALYSIS
+// ══════════════════════════════════════════════════════════
+
+var aiLastResult = null;   // cache last result so tab re-opens instantly
+
+function renderAITab() {
+  // Show context pills with what data is available
+  renderAIContextPills();
+  // If we already have a cached result, show it immediately
+  if (aiLastResult) {
+    renderAIResult(aiLastResult);
+  }
+}
+
+function renderAIContextPills() {
+  var el = document.getElementById('ai-context-pills');
+  if (!el) return;
+  var terrMap   = buildTerrMap();
+  var territories = Object.keys(terrMap);
+  var knockable = addresses.filter(isKnockable);
+  var worked    = knockable.filter(function(a){
+    var s = (a.status||'pending').toLowerCase();
+    return s !== 'pending' && s !== '' && s !== 'homes passed';
+  }).length;
+  var totalSales = knockable.filter(function(a){
+    return a.status === 'mega' || a.status === 'gig';
+  }).length;
+  var staleCount = getStaleAddresses ? getStaleAddresses().length : 0;
+
+  var pills = [
+    { dot: 'default', label: territories.length + ' territor' + (territories.length===1?'y':'ies') },
+    { dot: 'default', label: knockable.length + ' homes' },
+    { dot: 'default', label: worked + ' knocked' },
+    { dot: totalSales > 0 ? 'default' : 'dim', label: totalSales + ' sales' },
+    { dot: staleCount > 5 ? 'warn' : 'default', label: staleCount + ' follow-ups' }
+  ];
+
+  el.innerHTML = pills.map(function(p) {
+    return '<div class="ai-pill">' +
+      '<div class="ai-pill-dot ' + (p.dot !== 'default' ? p.dot : '') + '"></div>' +
+      p.label +
+    '</div>';
+  }).join('');
+}
+
+// ── Build the full data payload ────────────────────────────
+function buildAIPayload() {
+  var terrMap   = buildTerrMap();
+  var knockable = addresses.filter(isKnockable);
+
+  // --- Rep performance from the last manager fetch ---
+  var repListEl   = document.getElementById('mgr-rep-list');
+  var repCards    = repListEl ? repListEl.querySelectorAll('.mgr-rep-card') : [];
+  var repSummary  = [];
+  repCards.forEach(function(card) {
+    var nameEl  = card.querySelector('.mgr-rep-name');
+    var salesEl = card.querySelector('.mgr-rep-sales');
+    var isOnline = card.classList.contains('rep-online');
+    if (nameEl) {
+      repSummary.push({
+        name:   nameEl.textContent.trim(),
+        online: isOnline,
+        sales:  salesEl ? salesEl.textContent.trim() : '0 sales'
+      });
+    }
+  });
+
+  // --- Territory stats ---
+  var territoryStats = Object.keys(terrMap).map(function(t) {
+    var d  = terrMap[t];
+    var cr = d.worked > 0 ? (d.sales / d.worked) : 0;
+    var cov = d.total > 0 ? (d.worked / d.total) : 0;
+    return {
+      name:            t,
+      totalHomes:      d.total,
+      knocked:         d.worked,
+      pending:         d.pending,
+      coveragePct:     Math.round(cov * 100),
+      sales:           d.sales,
+      mega:            d.mega,
+      gig:             d.gig,
+      closeRatePct:    Math.round(cr * 100),
+      notHome:         d.nothome,
+      brightspeed:     d.brightspeed,
+      inContract:      d.incontract,
+      goBack:          d.goback,
+      notInterested:   d.notinterested,
+      vacant:          d.vacant,
+      business:        d.business,
+      existingCustomers: d.existingCustomers
+    };
+  });
+
+  // --- Overall metrics ---
+  var totalWorked = knockable.filter(function(a){
+    var s = (a.status||'pending').toLowerCase();
+    return s !== 'pending' && s !== '' && s !== 'homes passed';
+  }).length;
+  var totalSold = knockable.filter(function(a){
+    return a.status === 'mega' || a.status === 'gig';
+  }).length;
+  var totalMega = knockable.filter(function(a){ return a.status === 'mega'; }).length;
+  var totalGig  = knockable.filter(function(a){ return a.status === 'gig';  }).length;
+  var pending   = knockable.filter(function(a){
+    var s = (a.status||'pending').toLowerCase();
+    return !s || s === 'pending';
+  }).length;
+  var globalCR  = totalWorked > 0 ? totalSold / totalWorked : 0;
+  var gigMix    = totalSold   > 0 ? totalGig  / totalSold   : 0;
+
+  // --- Stale follow-up summary ---
+  var stale = typeof getStaleAddresses === 'function' ? getStaleAddresses() : [];
+  var staleByTerritory = {};
+  stale.forEach(function(a) {
+    var t = (a.territory || 'Unknown').trim();
+    if (!staleByTerritory[t]) staleByTerritory[t] = { goBack: 0, notHome: 0 };
+    if (a.status === 'goback')   staleByTerritory[t].goBack++;
+    else                         staleByTerritory[t].notHome++;
+  });
+
+  // --- Forecast ---
+  var MEGA_MRR = 29.95 + 5.00 + 1.00;
+  var GIG_MRR  = 39.95 + 5.00 + 1.00;
+  var currentMRR  = (totalMega * MEGA_MRR) + (totalGig * GIG_MRR);
+  var projSales   = Math.round(pending * globalCR);
+  var projGig     = Math.round(projSales * (gigMix || 0.40));
+  var projMega    = projSales - projGig;
+  var projMRR     = currentMRR + (projMega * MEGA_MRR) + (projGig * GIG_MRR);
+
+  return {
+    generatedAt:     new Date().toISOString(),
+    summary: {
+      totalKnockableHomes: knockable.length,
+      totalKnocked:        totalWorked,
+      totalPending:        pending,
+      totalSales:          totalSold,
+      megaSales:           totalMega,
+      gigSales:            totalGig,
+      globalCloseRatePct:  Math.round(globalCR * 100),
+      gigMixPct:           Math.round(gigMix * 100),
+      currentMRR:          Math.round(currentMRR),
+      projectedMRR:        Math.round(projMRR),
+      projectedAdditionalSales: projSales,
+      totalFollowUps:      stale.length,
+      onlineReps:          repSummary.filter(function(r){ return r.online; }).length,
+      totalReps:           repSummary.length
+    },
+    territories:     territoryStats,
+    reps:            repSummary,
+    followUpsByTerritory: staleByTerritory
+  };
+}
+
+// ── Run the analysis ───────────────────────────────────────
+function runAIAnalysis() {
+  if (!webhookURL) {
+    renderAIError('No webhook URL configured. Set up your Google Apps Script first.');
+    return;
+  }
+
+  var btn   = document.getElementById('ai-run-btn');
+  var label = document.getElementById('ai-run-btn-label');
+  if (btn)   btn.disabled = true;
+  if (label) label.textContent = '⏳ Analysing…';
+
+  // Show loading state
+  var output = document.getElementById('ai-output');
+  if (output) {
+    output.className = 'ai-output-loading';
+    output.innerHTML =
+      '<div class="ai-loading-orb"></div>' +
+      '<div class="ai-loading-label">Analysing field data…</div>' +
+      '<div class="ai-loading-steps" id="ai-loading-step">Building territory snapshot</div>';
+  }
+
+  // Animate loading steps
+  var steps = [
+    'Building territory snapshot',
+    'Computing close rates & coverage',
+    'Scanning competitor landscape',
+    'Evaluating follow-up queue',
+    'Generating deployment recommendations',
+    'Writing briefing…'
+  ];
+  var stepIdx = 0;
+  var stepTimer = setInterval(function() {
+    stepIdx = (stepIdx + 1) % steps.length;
+    var el = document.getElementById('ai-loading-step');
+    if (el) el.textContent = steps[stepIdx];
+  }, 1800);
+
+  var payload = buildAIPayload();
+
+  fetch(webhookURL, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      type:    'ai_analysis',
+      payload: payload
+    })
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  })
+  .then(function(data) {
+    clearInterval(stepTimer);
+    if (data.status === 'error') throw new Error(data.message || 'Analysis failed');
+    aiLastResult = data;
+    renderAIResult(data);
+
+    var ts = document.getElementById('ai-timestamp');
+    if (ts) ts.textContent = 'Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  })
+  .catch(function(err) {
+    clearInterval(stepTimer);
+    renderAIError('Analysis failed: ' + err.message + '. Check that handleAIAnalysis() is deployed in your Apps Script and your Anthropic API key is set.');
+  })
+  .finally(function() {
+    if (btn)   btn.disabled = false;
+    if (label) label.textContent = '↻ Re-run Analysis';
+  });
+}
+
+// ── Render the structured result ───────────────────────────
+function renderAIResult(data) {
+  var output = document.getElementById('ai-output');
+  if (!output) return;
+  output.className = 'ai-output-active';
+
+  var r = data.analysis || {};
+  var html = '';
+
+  // ── Summary grid ───────────────────────────────────────
+  if (r.headline) {
+    html += '<div class="ai-section">' +
+      '<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px;line-height:1.4">' +
+        escHtml(r.headline) +
+      '</div>';
+    if (r.situation) {
+      html += '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:10px">' +
+        escHtml(r.situation) + '</div>';
+    }
+    html += '</div>';
+  }
+
+  // ── Key metrics row ────────────────────────────────────
+  if (r.metrics && r.metrics.length) {
+    html += '<div class="ai-summary-grid">';
+    r.metrics.forEach(function(m) {
+      html += '<div class="ai-summary-cell">' +
+        '<div class="ai-summary-val">' + escHtml(String(m.value)) + '</div>' +
+        '<div class="ai-summary-lbl">' + escHtml(m.label) + '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Deployment recommendations ─────────────────────────
+  if (r.recommendations && r.recommendations.length) {
+    html += '<div class="ai-section">' +
+      '<div class="ai-section-head">🎯 Deployment Recommendations</div>';
+    r.recommendations.forEach(function(rec) {
+      var pri = (rec.priority || 'medium').toLowerCase();
+      html += '<div class="ai-rec-card priority-' + escHtml(pri) + '">' +
+        '<div class="ai-rec-header">' +
+          '<span class="ai-rec-priority">' + pri.toUpperCase() + '</span>' +
+          '<div>' +
+            (rec.territory ? '<div class="ai-rec-territory">📍 ' + escHtml(rec.territory) + '</div>' : '') +
+            '<div class="ai-rec-action">' + escHtml(rec.action) + '</div>' +
+          '</div>' +
+        '</div>' +
+        (rec.reasoning ? '<div class="ai-rec-detail">' + escHtml(rec.reasoning) + '</div>' : '') +
+      '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Insights ───────────────────────────────────────────
+  if (r.insights && r.insights.length) {
+    html += '<div class="ai-section">' +
+      '<div class="ai-section-head">💡 Key Insights</div>';
+    r.insights.forEach(function(ins) {
+      html += '<div class="ai-insight-row">' +
+        '<span class="ai-insight-icon">' + escHtml(ins.icon || '▸') + '</span>' +
+        '<span>' + escHtml(ins.text) + '</span>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Rep coaching ───────────────────────────────────────
+  if (r.repCoaching && r.repCoaching.length) {
+    html += '<div class="ai-section">' +
+      '<div class="ai-section-head">👤 Rep Coaching Notes</div>';
+    r.repCoaching.forEach(function(note) {
+      html += '<div class="ai-insight-row">' +
+        '<span class="ai-insight-icon">•</span>' +
+        '<span><strong>' + escHtml(note.rep) + '</strong> — ' + escHtml(note.note) + '</span>' +
+      '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Today's focus ──────────────────────────────────────
+  if (r.todaysFocus) {
+    html += '<div class="ai-section">' +
+      '<div class="ai-section-head">⚡ Today\'s Focus</div>' +
+      '<div style="background:rgba(0,86,150,.1);border:1px solid rgba(0,86,150,.25);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--text);line-height:1.6">' +
+        escHtml(r.todaysFocus) +
+      '</div>' +
+    '</div>';
+  }
+
+  output.innerHTML = html || '<div class="ai-output-placeholder"><div class="ai-placeholder-icon">✅</div>Analysis complete but no structured output returned. Check Apps Script logs.</div>';
+}
+
+function renderAIError(msg) {
+  var output = document.getElementById('ai-output');
+  if (output) {
+    output.className = 'ai-output-active';
+    output.innerHTML = '<div class="ai-error-box">⚠ ' + escHtml(msg) + '</div>';
+  }
+}

@@ -235,6 +235,7 @@
         <button class="mgr-tab" onclick="switchMgrTab('coverage',this)">🗺 Coverage</button>
         <button class="mgr-tab" onclick="switchMgrTab('forecast',this)">💰 Forecast</button>
         <button class="mgr-tab" onclick="switchMgrTab('territory',this)">🎯 Territory</button>
+        <button class="mgr-tab mgr-tab-ai" onclick="switchMgrTab('ai',this)">🤖 AI Analysis</button>
         <!-- AI Coach removed -->
       </div>
 
@@ -392,6 +393,36 @@
       </div>
 
       <!-- AI Coach tab removed -->
+
+      <!-- ── TAB: AI ANALYSIS ── -->
+      <div id="mgr-tab-ai" class="mgr-tab-panel">
+
+        <div class="ai-hero-card">
+          <div class="ai-hero-left">
+            <div class="ai-hero-title">🤖 Field Intelligence Briefing</div>
+            <div class="ai-hero-sub">Claude analyses all live territory, rep, competitor, and forecast data to give you actionable deployment recommendations.</div>
+          </div>
+          <button class="ai-run-btn" id="ai-run-btn" onclick="runAIAnalysis()">
+            <span id="ai-run-btn-label">▶ Run Analysis</span>
+          </button>
+        </div>
+
+        <!-- Context pills — what data is being sent -->
+        <div class="ai-context-pills" id="ai-context-pills"></div>
+
+        <!-- Output area -->
+        <div id="ai-output" class="ai-output-idle">
+          <div class="ai-output-placeholder">
+            <div class="ai-placeholder-icon">🧠</div>
+            <div>Hit <strong>Run Analysis</strong> to get a live briefing based on today's field data.<br>
+            Takes about 10–15 seconds.</div>
+          </div>
+        </div>
+
+        <!-- Timestamp -->
+        <div class="ai-timestamp" id="ai-timestamp"></div>
+
+      </div>
 
       <button class="mgr-close-btn" onclick="closeManagerPanel()">Close</button>
     </div>
@@ -699,7 +730,6 @@
 </div>
 
 <!-- Toast -->
-
 <div id="toast"></div>
 
 <!-- Guide Modal -->
