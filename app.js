@@ -4183,57 +4183,75 @@ function runAIAnalysis() {
     '\n\n── FOLLOW-UP QUEUE ──\n' + followUpLines +
     '\n\nProduce the JSON briefing now.';
 
-  // ── Call Anthropic directly ────────────────────────────
-  var controller = new AbortController();
-  var timeoutId  = setTimeout(function() { controller.abort(); }, 45000);
+  // ── Call Anthropic with auto-retry on 529 overloaded ──
+  var MAX_RETRIES = 3;
+  var retryCount  = 0;
 
-  fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
-    signal:  controller.signal,
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model:      'claude-opus-4-6',
-      max_tokens: 1500,
-      system:     systemPrompt,
-      messages:   [{ role: 'user', content: userPrompt }]
-    })
-  })
-  .then(function(r) {
-    clearTimeout(timeoutId);
-    if (!r.ok) return r.text().then(function(t) { throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 200)); });
-    return r.json();
-  })
-  .then(function(apiResult) {
-    clearInterval(stepTimer);
-    var rawText = apiResult.content && apiResult.content[0] && apiResult.content[0].text
-      ? apiResult.content[0].text.trim() : '';
-    if (!rawText) throw new Error('Empty response from Claude.');
-
-    // Strip any accidental markdown fences
-    rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    var analysis = JSON.parse(rawText);
-
-    aiLastResult = { status: 'ok', analysis: analysis };
-    renderAIResult(aiLastResult);
-    var ts = document.getElementById('ai-timestamp');
-    if (ts) ts.textContent = 'Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  })
-  .catch(function(err) {
-    clearInterval(stepTimer);
-    clearTimeout(timeoutId);
-    var msg = err.name === 'AbortError'
-      ? 'Request timed out after 45 s. Check your API key and try again.'
-      : err.message;
-    renderAIError(msg);
-  })
-  .finally(function() {
-    resetBtn('↻ Re-run Analysis');
+  var requestBody = JSON.stringify({
+    model:      'claude-sonnet-4-6',
+    max_tokens: 1500,
+    system:     systemPrompt,
+    messages:   [{ role: 'user', content: userPrompt }]
   });
+
+  function attemptFetch() {
+    var controller = new AbortController();
+    var timeoutId  = setTimeout(function() { controller.abort(); }, 45000);
+
+    fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      signal:  controller.signal,
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: requestBody
+    })
+    .then(function(r) {
+      clearTimeout(timeoutId);
+      if (r.status === 529 || r.status === 503) {
+        retryCount++;
+        if (retryCount <= MAX_RETRIES) {
+          var delay = retryCount * 8000;
+          var stepEl = document.getElementById('ai-loading-step');
+          if (stepEl) stepEl.textContent = 'API busy — retrying in ' + (delay/1000) + 's (' + retryCount + '/' + MAX_RETRIES + ')';
+          setTimeout(attemptFetch, delay);
+          return null;
+        }
+        return r.text().then(function() {
+          throw new Error('Anthropic API is overloaded. Wait 30–60 seconds and try again.');
+        });
+      }
+      if (!r.ok) return r.text().then(function(t) { throw new Error('HTTP ' + r.status + ': ' + t.substring(0, 200)); });
+      return r.json();
+    })
+    .then(function(apiResult) {
+      if (!apiResult) return;
+      clearInterval(stepTimer);
+      var rawText = apiResult.content && apiResult.content[0] && apiResult.content[0].text
+        ? apiResult.content[0].text.trim() : '';
+      if (!rawText) throw new Error('Empty response from Claude.');
+      rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+      var analysis = JSON.parse(rawText);
+      aiLastResult = { status: 'ok', analysis: analysis };
+      renderAIResult(aiLastResult);
+      var ts = document.getElementById('ai-timestamp');
+      if (ts) ts.textContent = 'Generated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      resetBtn('\u21bb Re-run Analysis');
+    })
+    .catch(function(err) {
+      clearInterval(stepTimer);
+      clearTimeout(timeoutId);
+      renderAIError(err.name === 'AbortError'
+        ? 'Request timed out after 45 s. Check your API key and try again.'
+        : String(err.message || err));
+      resetBtn('\u21bb Re-run Analysis');
+    });
+  }
+
+  attemptFetch();
 }
 
 // ── Render the structured result ───────────────────────────
