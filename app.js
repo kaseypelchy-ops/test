@@ -9,7 +9,7 @@
 var APP_NAME    = 'Zito FieldOS';
 var APP_TAGLINE = 'Field Operations & Sales Intelligence';
 var APP_VERSION = '2.0.1';
-var BUILD_ID    = '2026.03.03';
+var BUILD_ID    = '2026.03.04';
 var APP_ENV     = 'Production';
 
 var addresses  = [];
@@ -30,6 +30,7 @@ var kmlGeoJSON = null;
 var toastTimer = null;
 var sidebarOpen  = true;
 var pinDropMode  = false;
+var drawZoneMode = false;   // polygon drawing for zone-based house import
 var tempPinMarker = null;
 
 // ──────────────────────────────────────────────────────────
@@ -45,7 +46,13 @@ var COLORS = {
   notinterested: '#dc2626',
   goback:        '#06b6d4',
   vacant:        '#ca8a04',
-  business:      '#6366f1'
+  business:      '#6366f1',
+  // Bryson City extras
+  nothome2:      '#b45309',
+  nothome3:      '#92400e',
+  nothome4:      '#ef4444',
+  competitor:    '#dc2626',
+  activecustomer:'#facc15'
 };
 var COLOR_ACTIVE = '#facc15';
 
@@ -626,12 +633,17 @@ var HEAT_COLORS = {
   mega:          { fill: '#8b5cf6', opacity: 0.55 },
   gig:           { fill: '#10b981', opacity: 0.55 },
   nothome:       { fill: '#d97706', opacity: 0.40 },
+  nothome2:      { fill: '#b45309', opacity: 0.45 },
+  nothome3:      { fill: '#92400e', opacity: 0.50 },
+  nothome4:      { fill: '#ef4444', opacity: 0.55 },
   brightspeed:   { fill: '#ef4444', opacity: 0.45 },
+  competitor:    { fill: '#dc2626', opacity: 0.45 },
   incontract:    { fill: '#818cf8', opacity: 0.40 },
   notinterested: { fill: '#dc2626', opacity: 0.45 },
   goback:        { fill: '#06b6d4', opacity: 0.40 },
   vacant:        { fill: '#ca8a04', opacity: 0.35 },
   business:      { fill: '#6366f1', opacity: 0.40 },
+  activecustomer:{ fill: '#facc15', opacity: 0.50 },
   pending:       { fill: '#6b7280', opacity: 0.20 }
 };
 
@@ -797,8 +809,17 @@ function initMap() {
 
   // ── Pin-drop: tap map to place a new address ──────────────
   mapObj.on('click', function(e) {
+    if (drawZoneMode) { handleDrawZoneClick(e.latlng); return; }
     if (!pinDropMode) return;
     handleMapPinDrop(e.latlng);
+  });
+
+  // Double-click closes polygon when drawing (also prevents zoom-in during draw mode)
+  mapObj.on('dblclick', function(e) {
+    if (drawZoneMode && drawZonePoints.length >= 3) {
+      L.DomEvent.stopPropagation(e);
+      finalizeDrawZone();
+    }
   });
 
   // (Map Drop Pin control removed — use top bar button)
@@ -840,7 +861,7 @@ function getMarkerShape(addr) {
   // fall through to the `if (ac && ac !== '') return 'bolt'` catch-all below,
   // incorrectly showing "Active Customer" after Go Back Later / Not Interested /
   // Brightspeed etc. are submitted.
-  var REP_LOGGED = ['nothome','brightspeed','incontract','notinterested','goback','vacant','business'];
+  var REP_LOGGED = ['nothome','nothome2','nothome3','nothome4','brightspeed','incontract','notinterested','goback','vacant','business','competitor','activecustomer'];
   if (REP_LOGGED.indexOf(s) >= 0) return 'dot';
 
   // Sheet-driven status / activeCount checks (untouched addresses only)
@@ -1059,8 +1080,69 @@ var TAG_HTML  = {
   notinterested: '<span class="ar-tag tag-ni">❌ Not Int.</span>',
   goback:        '<span class="ar-tag tag-gbl">🔄 Go Back</span>',
   vacant:        '<span class="ar-tag tag-vac">🏚️ Vacant</span>',
-  business:      '<span class="ar-tag tag-biz">🏢 Business</span>'
+  business:      '<span class="ar-tag tag-biz">🏢 Business</span>',
+  // Bryson City extras
+  nothome2:      '<span class="ar-tag tag-nh">🚪 NH ×2</span>',
+  nothome3:      '<span class="ar-tag tag-nh">🚪 NH ×3</span>',
+  nothome4:      '<span class="ar-tag tag-nh">🚪 NH ×4</span>',
+  competitor:    '<span class="ar-tag tag-bs">🔌 Competitor</span>',
+  activecustomer:'<span class="ar-tag tag-mega">⚡ Active Cust.</span>'
 };
+
+// ──────────────────────────────────────────────────────────
+//  DISPOSITION CONFIGS — per-territory button sets
+// ──────────────────────────────────────────────────────────
+
+// Each entry: { label, id, status, cls, icon, needsNote, notePlaceholder }
+var DEFAULT_DISPOSITIONS = [
+  { label:'Not Home',       id:'sbt-nh',   status:'nothome',        cls:'act-nc', icon:'🚪', needsNote:true,  notePlaceholder:'Example: will return after 5pm / left flyer' },
+  { label:'Brightspeed',    id:'sbt-bs',   status:'brightspeed',    cls:'act-ni', icon:'⚡', needsNote:false },
+  { label:'In Contract',    id:'sbt-ic',   status:'incontract',     cls:'act-vm', icon:'📋', needsNote:false },
+  { label:'Not Interested', id:'sbt-ni',   status:'notinterested',  cls:'act-ni', icon:'❌', needsNote:true,  notePlaceholder:'Example: not interested — already has provider' },
+  { label:'Go Back Later',  id:'sbt-gbl',  status:'goback',         cls:'act-cb', icon:'🔄', needsNote:true,  notePlaceholder:'Example: customer asked to come back Friday' },
+  { label:'Vacant',         id:'sbt-vac',  status:'vacant',         cls:'act-nc', icon:'🏚️', needsNote:false },
+  { label:'Business',       id:'sbt-biz',  status:'business',       cls:'act-vm', icon:'🏢', needsNote:false }
+];
+
+var BRYSON_CITY_DISPOSITIONS = [
+  { label:'Not Home x1',    id:'sbt-nh1',  status:'nothome',        cls:'act-nc', icon:'🚪',    needsNote:true,  notePlaceholder:'Example: will return after 5pm / left flyer' },
+  { label:'Not Home x2',    id:'sbt-nh2',  status:'nothome2',       cls:'act-nc', icon:'🚪🚪',  needsNote:false },
+  { label:'Not Home x3',    id:'sbt-nh3',  status:'nothome3',       cls:'act-nc', icon:'🚪×3',  needsNote:false },
+  { label:'Not Home x4',    id:'sbt-nh4',  status:'nothome4',       cls:'act-ni', icon:'🚪×4',  needsNote:false },
+  { label:'Vacant',         id:'sbt-vac',  status:'vacant',         cls:'act-nc', icon:'🏚️',   needsNote:false },
+  { label:'Not Interested', id:'sbt-ni',   status:'notinterested',  cls:'act-ni', icon:'❌',    needsNote:true,  notePlaceholder:'Example: not interested — already has provider' },
+  { label:'Business',       id:'sbt-biz',  status:'business',       cls:'act-vm', icon:'🏢',   needsNote:false },
+  { label:'In Contract',    id:'sbt-ic',   status:'incontract',     cls:'act-vm', icon:'📋',   needsNote:false },
+  { label:'Competitor',     id:'sbt-comp', status:'competitor',     cls:'act-ni', icon:'🔌',   needsNote:false },
+  { label:'Active Customer',id:'sbt-ac',   status:'activecustomer', cls:'act-vm', icon:'⚡',   needsNote:false },
+  { label:'Go Back Later',  id:'sbt-gbl',  status:'goback',         cls:'act-cb', icon:'🔄',   needsNote:true,  notePlaceholder:'Example: customer asked to come back Friday' }
+];
+
+// Returns the correct disposition config for a given address
+function getDispositions(addr) {
+  var terr = ((addr && addr.territory) || activeTerritory || '').trim().toLowerCase().replace(/\s+/g,'_');
+  if (terr === 'bryson_city_nc') return BRYSON_CITY_DISPOSITIONS;
+  return DEFAULT_DISPOSITIONS;
+}
+
+// Returns the disposition entry whose status matches, searching the given config
+function findDispByStatus(status, config) {
+  for (var i = 0; i < config.length; i++) {
+    if (config[i].status === status) return config[i];
+  }
+  return null;
+}
+
+// Render the No Sale buttons into #status-grid for the given address
+function renderDispositionButtons(addr) {
+  var grid = document.getElementById('status-grid');
+  if (!grid) return;
+  var config = getDispositions(addr);
+  grid.innerHTML = config.map(function(d) {
+    return '<button class="stbtn" id="' + d.id + '" onclick="pickStatus(\'' + d.label.replace(/'/g,"\\'") + '\')">' +
+      d.icon + ' ' + d.label + '</button>';
+  }).join('');
+}
 
 // Single delegated click listener on the address list container.
 // Attached once at startup — never recreated on buildList() calls.
@@ -1225,48 +1307,24 @@ function openForm(id) {
   document.getElementById('btn-gig').disabled   = true;
   document.getElementById('btn-mega').textContent = '⚡ Submit — Mega Speed';
   document.getElementById('btn-gig').textContent  = '🚀 Submit — Gig Speed';
-  document.getElementById('pricing-box').style.display        = 'none';
-  document.getElementById('proration-section').style.display  = 'none';
-  document.getElementById('sched-confirmed').style.display    = 'none';
-  document.getElementById('sched-picker').style.display       = 'none';
-  document.getElementById('sched-loading').style.display      = 'none';
-  document.getElementById('sched-error').style.display        = 'none';
+  document.getElementById('pricing-box').classList.add('hidden');
+  document.getElementById('proration-section').classList.add('hidden');
+  document.getElementById('sched-confirmed').classList.add('hidden');
+  document.getElementById('sched-picker').classList.add('hidden');
+  document.getElementById('sched-loading').classList.add('hidden');
+  document.getElementById('sched-error').classList.add('hidden');
   document.getElementById('f-install-date').value = '';
   document.getElementById('f-install-time').value = '';
   selSlot = null;
 
   ['sbt-nh','sbt-bs','sbt-ic','sbt-ni','sbt-gbl','sbt-vac','sbt-biz'].forEach(function(sid) {
-    document.getElementById(sid).className = 'stbtn';
+    var el = document.getElementById(sid); if (el) el.className = 'stbtn';
   });
 
+  // Render the correct set of buttons for this address's territory
+  renderDispositionButtons(addr);
+
   // ── Restore previous disposition if address was already visited ──────────
-  var statusToLabel = {
-    nothome:       'Not Home',
-    brightspeed:   'Brightspeed',
-    incontract:    'In Contract',
-    notinterested: 'Not Interested',
-    goback:        'Go Back Later',
-    vacant:        'Vacant',
-    business:      'Business'
-  };
-  var statusToBtn = {
-    nothome:       'sbt-nh',
-    brightspeed:   'sbt-bs',
-    incontract:    'sbt-ic',
-    notinterested: 'sbt-ni',
-    goback:        'sbt-gbl',
-    vacant:        'sbt-vac',
-    business:      'sbt-biz'
-  };
-  var statusCls = {
-    nothome:       'act-nc',
-    brightspeed:   'act-ni',
-    incontract:    'act-vm',
-    notinterested: 'act-ni',
-    goback:        'act-cb',
-    vacant:        'act-nc',
-    business:      'act-vm'
-  };
   var prevDisp    = document.getElementById('prev-disposition');
   var prevStatus  = document.getElementById('prev-disp-status');
   var prevNote    = document.getElementById('prev-disp-note');
@@ -1274,11 +1332,14 @@ function openForm(id) {
   var nsNote      = document.getElementById('ns-note');
   var curStatus   = (addr.status || '').toLowerCase().trim();
   var curNote     = (addr.note   || '').trim();
-  var prevLabel   = statusToLabel[curStatus];
 
-  if (prevLabel) {
-    // Show the banner
-    prevStatus.textContent = prevLabel;
+  var config      = getDispositions(addr);
+  var prevEntry   = findDispByStatus(curStatus, config);
+  // Also check default config so addresses loaded from sheet restore correctly
+  if (!prevEntry) prevEntry = findDispByStatus(curStatus, DEFAULT_DISPOSITIONS);
+
+  if (prevEntry) {
+    prevStatus.textContent = prevEntry.label;
     prevStatus.className   = 'prev-disp-status s-' + curStatus;
     if (curNote) {
       prevNote.textContent   = '💬 ' + curNote;
@@ -1288,26 +1349,17 @@ function openForm(id) {
     }
     prevDisp.style.display = 'block';
 
-    // Pre-highlight the matching status button
-    selStatus = prevLabel;
-    if (statusToBtn[curStatus]) {
-      document.getElementById(statusToBtn[curStatus]).className = 'stbtn ' + statusCls[curStatus];
-    }
+    selStatus = prevEntry.label;
+    var btnEl = document.getElementById(prevEntry.id);
+    if (btnEl) btnEl.className = 'stbtn ' + prevEntry.cls;
 
-    // Pre-fill note textarea (show it if this status normally has one)
-    var needsNote = (prevLabel === 'Not Home' || prevLabel === 'Not Interested' || prevLabel === 'Go Back Later');
+    var needsNote = !!prevEntry.needsNote;
     if (nsWrap && nsNote) {
       nsWrap.style.display = needsNote ? 'block' : 'none';
       nsNote.value = curNote;
-      if (needsNote) {
-        nsNote.placeholder =
-          (prevLabel === 'Not Home') ? 'Example: will return after 5pm / left flyer' :
-          (prevLabel === 'Go Back Later') ? 'Example: customer asked to come back Friday' :
-          'Example: not interested — already has provider';
-      }
+      if (needsNote && prevEntry.notePlaceholder) nsNote.placeholder = prevEntry.notePlaceholder;
     }
   } else {
-    // No prior no-sale disposition — hide banner, reset note
     prevDisp.style.display = 'none';
     if (nsWrap && nsNote) { nsWrap.style.display = 'none'; nsNote.value = ''; }
   }
@@ -1338,9 +1390,11 @@ function clearPrevDisposition() {
   addr.note   = '';
   // Reset banner
   document.getElementById('prev-disposition').style.display = 'none';
-  // Reset status buttons and note textarea
-  ['sbt-nh','sbt-bs','sbt-ic','sbt-ni','sbt-gbl','sbt-vac','sbt-biz'].forEach(function(sid) {
-    document.getElementById(sid).className = 'stbtn';
+  // Reset all disposition buttons for the current territory
+  var config = getDispositions(addr);
+  config.forEach(function(d) {
+    var el = document.getElementById(d.id);
+    if (el) el.className = 'stbtn';
   });
   selStatus = null;
   var nsWrap = document.getElementById('ns-note-wrap');
@@ -1379,7 +1433,7 @@ function pickPkg(p) {
   document.getElementById('pkg-gig').className  = 'pkg-card gig-card'  + (p === 'gig'  ? ' active' : '');
   document.getElementById('btn-mega').disabled  = (p !== 'mega');
   document.getElementById('btn-gig').disabled   = (p !== 'gig');
-  document.getElementById('pricing-box').style.display = 'block';
+  document.getElementById('pricing-box').classList.remove('hidden');
   schedShow();
   calcPricing();
 }
@@ -1424,7 +1478,7 @@ function schedThisMonday() {
 }
 
 function schedFetch(callback) {
-  fetch(SCHED_URL + '?action=schedule&_t=' + Date.now())
+  fetch(SCHED_URL + '?action=schedule&territory=' + encodeURIComponent(activeTerritory || 'Palestine') + '&_t=' + Date.now())
     .then(function(r){ return r.json(); })
     .then(function(json){
       if (!json || !json.rows) { callback(false); return; }
@@ -1448,20 +1502,20 @@ function schedFetch(callback) {
 }
 
 function schedShow() {
-  document.getElementById('sched-loading').style.display = 'flex';
-  document.getElementById('sched-picker').style.display  = 'none';
-  document.getElementById('sched-error').style.display   = 'none';
-  document.getElementById('sched-confirmed').style.display = 'none';
+  document.getElementById('sched-loading').classList.remove('hidden');
+  document.getElementById('sched-picker').classList.add('hidden');
+  document.getElementById('sched-error').classList.add('hidden');
+  document.getElementById('sched-confirmed').classList.add('hidden');
   schedWeekOff = 0;
 
   schedFetch(function(ok){
-    document.getElementById('sched-loading').style.display = 'none';
+    document.getElementById('sched-loading').classList.add('hidden');
     if (!ok) {
-      document.getElementById('sched-error').style.display  = 'block';
+      document.getElementById('sched-error').classList.remove('hidden');
       document.getElementById('sched-error').textContent    = '⚠ Could not load schedule.';
       return;
     }
-    document.getElementById('sched-picker').style.display = 'block';
+    document.getElementById('sched-picker').classList.remove('hidden');
     schedRenderWeek();
   });
 }
@@ -1538,8 +1592,8 @@ function schedPickSlot(date, time) {
   document.getElementById('sched-conf-date').textContent = DAYS[d.getDay()]+', '+MO[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear();
   document.getElementById('sched-conf-time').textContent = '🕐 '+time;
 
-  document.getElementById('sched-picker').style.display    = 'none';
-  document.getElementById('sched-confirmed').style.display = 'flex';
+  document.getElementById('sched-picker').classList.add('hidden');
+  document.getElementById('sched-confirmed').classList.remove('hidden');
 
   var mo = MO[d.getMonth()];
   document.getElementById('btn-mega').textContent = '⚡ Submit Mega — '+mo+' '+d.getDate()+' @ '+time;
@@ -1550,9 +1604,9 @@ function schedClearSlot() {
   selSlot = null;
   document.getElementById('f-install-date').value = '';
   document.getElementById('f-install-time').value = '';
-  document.getElementById('sched-confirmed').style.display = 'none';
-  document.getElementById('sched-picker').style.display    = 'block';
-  document.getElementById('proration-section').style.display = 'none';
+  document.getElementById('sched-confirmed').classList.add('hidden');
+  document.getElementById('sched-picker').classList.remove('hidden');
+  document.getElementById('proration-section').classList.add('hidden');
   document.getElementById('btn-mega').textContent = '⚡ Submit — Mega Speed';
   document.getElementById('btn-gig').textContent  = '🚀 Submit — Gig Speed';
   schedRenderWeek();
@@ -1588,7 +1642,7 @@ function calcPricing() {
 
   var dateEl = document.getElementById('f-install-date');
   var proSection = document.getElementById('proration-section');
-  if (!dateEl.value) { proSection.style.display = 'none'; return; }
+  if (!dateEl.value) { proSection.classList.add('hidden'); return; }
 
   var install = new Date(dateEl.value + 'T12:00:00');
   var nextFirst = new Date(install.getFullYear(), install.getMonth() + 1, 1);
@@ -1609,35 +1663,36 @@ function calcPricing() {
   var firstBillFeesOnly = MODEM + EERO + PROC;
   document.getElementById('pr-firstbill-total').textContent   = '$' + (firstBillFeesOnly + prorateToFirstBill).toFixed(2);
   document.getElementById('pr-firstbill-fees').textContent    = '$' + firstBillFeesOnly.toFixed(2);
-  proSection.style.display = 'block';
+  proSection.classList.remove('hidden');
 }
 
 function pickStatus(s) {
   selStatus = s;
-  var map = {
-    'Not Home':      { id:'sbt-nh',  cls:'act-nc' },
-    'Brightspeed':   { id:'sbt-bs',  cls:'act-ni' },
-    'In Contract':   { id:'sbt-ic',  cls:'act-vm' },
-    'Not Interested':{ id:'sbt-ni',  cls:'act-ni' },
-    'Go Back Later': { id:'sbt-gbl', cls:'act-cb' },
-    'Vacant':        { id:'sbt-vac', cls:'act-nc' },
-    'Business':      { id:'sbt-biz', cls:'act-vm' }
-  };
-  ['sbt-nh','sbt-bs','sbt-ic','sbt-ni','sbt-gbl','sbt-vac','sbt-biz'].forEach(function(sid) { document.getElementById(sid).className = 'stbtn'; });
-  if (map[s]) document.getElementById(map[s].id).className = 'stbtn ' + map[s].cls;
 
-  var needsNote = (s === 'Not Home' || s === 'Not Interested' || s === 'Go Back Later');
+  // Get the config for the currently open address
+  var addr = getAddr();
+  var config = getDispositions(addr);
+
+  // Reset all buttons in the current grid
+  config.forEach(function(d) {
+    var el = document.getElementById(d.id);
+    if (el) el.className = 'stbtn';
+  });
+
+  // Highlight the selected one
+  var entry = config.find(function(d){ return d.label === s; });
+  if (entry) {
+    var el = document.getElementById(entry.id);
+    if (el) el.className = 'stbtn ' + entry.cls;
+  }
+
+  var needsNote = entry ? !!entry.needsNote : false;
   var wrap = document.getElementById('ns-note-wrap');
   var note = document.getElementById('ns-note');
   if (wrap && note) {
     wrap.style.display = needsNote ? 'block' : 'none';
     if (!needsNote) note.value = '';
-    if (needsNote) {
-      note.placeholder =
-        (s === 'Not Home') ? 'Example: will return after 5pm / left flyer' :
-        (s === 'Go Back Later') ? 'Example: customer asked to come back Friday' :
-        'Example: not interested — already has provider';
-    }
+    if (needsNote && entry && entry.notePlaceholder) note.placeholder = entry.notePlaceholder;
   }
 }
 
@@ -1764,7 +1819,11 @@ function submitStatus() {
   // to write the status + note to the Addresses tab.
   maybeWriteNewAddrToSheet(addr);
 
-  var smap = { 'Not Home':'nothome','Brightspeed':'brightspeed','In Contract':'incontract','Not Interested':'notinterested','Go Back Later':'goback','Vacant':'vacant','Business':'business' };
+  // Build label→status map from both configs so any territory works
+  var smap = {};
+  DEFAULT_DISPOSITIONS.concat(BRYSON_CITY_DISPOSITIONS).forEach(function(d) {
+    smap[d.label] = d.status;
+  });
   addr.status = smap[selStatus] || 'nocontact';
   addr.salesperson = repName;
   addr.note = notes || '';
@@ -2233,7 +2292,13 @@ var STATUS_LABELS = {
   vacant:        'Vacant',
   business:      'Business',
   pending:       'Pending / Untouched',
-  nocontact:     'No Contact'
+  nocontact:     'No Contact',
+  // Bryson City
+  nothome2:      'Not Home ×2',
+  nothome3:      'Not Home ×3',
+  nothome4:      'Not Home ×4',
+  competitor:    'Competitor',
+  activecustomer:'Active Customer'
 };
 
 // ── Analytics Tab ──────────────────────────────────────────
@@ -2953,12 +3018,17 @@ function buildTerrMap() {
     if (s === 'mega')            { d.mega++;          d.sales++; }
     else if (s === 'gig')        { d.gig++;           d.sales++; }
     else if (s === 'nothome')      d.nothome++;
+    else if (s === 'nothome2')     d.nothome++;   // count all NH variants together
+    else if (s === 'nothome3')     d.nothome++;
+    else if (s === 'nothome4')     d.nothome++;
     else if (s === 'brightspeed')  d.brightspeed++;
+    else if (s === 'competitor')   d.brightspeed++; // lump competitor with BS for coverage stats
     else if (s === 'incontract')   d.incontract++;
     else if (s === 'goback')       d.goback++;
     else if (s === 'notinterested') d.notinterested++;
     else if (s === 'vacant')       d.vacant++;
     else if (s === 'business')     d.business++;
+    else if (s === 'activecustomer') d.existingCustomers++; // treat as existing
   });
   return m;
 }
@@ -3651,6 +3721,396 @@ function addPinDropAddress(street, city, state, zip, lat, lng) {
   openForm(newId);
 
   toast('📍 ' + street + ' added!', 't-ok');
+}
+
+// ──────────────────────────────────────────────────────────
+//  DRAW ZONE — polygon drawing + OSM rooftop auto-import
+// ──────────────────────────────────────────────────────────
+var drawZoneMode    = false;
+var drawZonePoints  = [];        // [{lat,lng}] polygon vertices
+var drawZoneVisuals = [];        // temp Leaflet layers to clear on cancel/reset
+var drawZonePolygon = null;      // filled polygon shown after closing
+var drawZonePending = [];        // buildings awaiting user confirmation
+
+function toggleDrawZoneMode() {
+  if (drawZoneMode) { cancelDrawZone(); return; }
+  if (pinDropMode)  cancelPinDropMode();
+  drawZoneMode   = true;
+  drawZonePoints = [];
+  _dzClearVisuals_();
+  var btn = document.getElementById('btn-draw-zone-top');
+  if (btn) { btn.classList.add('active'); btn.textContent = '✏️ Drawing…'; }
+  document.getElementById('draw-zone-banner').classList.add('show');
+  var mapEl = document.getElementById('map');
+  if (mapEl) mapEl.classList.add('draw-zone-mode');
+  if (window.innerWidth <= 640 && sidebarOpen) toggleSidebar();
+  toast('✏️ Tap corners on the map — double-tap or tap the ● to close', 't-info');
+}
+
+function cancelDrawZone() {
+  drawZoneMode   = false;
+  drawZonePoints = [];
+  _dzClearVisuals_();
+  var btn = document.getElementById('btn-draw-zone-top');
+  if (btn) { btn.classList.remove('active'); btn.textContent = '🏘 Draw Zone'; }
+  document.getElementById('draw-zone-banner').classList.remove('show');
+  var mapEl = document.getElementById('map');
+  if (mapEl) mapEl.classList.remove('draw-zone-mode');
+}
+
+function _dzClearVisuals_() {
+  if (!mapObj) return;
+  drawZoneVisuals.forEach(function(l) { try { mapObj.removeLayer(l); } catch(e) {} });
+  drawZoneVisuals = [];
+  if (drawZonePolygon) { try { mapObj.removeLayer(drawZonePolygon); } catch(e) {} drawZonePolygon = null; }
+}
+
+function handleDrawZoneClick(latlng) {
+  // Snap-to-close: clicking within ~200ft of the first point closes the polygon
+  if (drawZonePoints.length >= 3) {
+    var first = drawZonePoints[0];
+    if (haversineMiles(first.lat, first.lng, latlng.lat, latlng.lng) < 0.04) {
+      finalizeDrawZone();
+      return;
+    }
+  }
+  drawZonePoints.push({ lat: latlng.lat, lng: latlng.lng });
+  _dzUpdateVisuals_();
+  // Update hint after first point
+  var hint = document.getElementById('draw-zone-banner-text');
+  if (hint && drawZonePoints.length === 1) hint.textContent = '✏️ Keep tapping corners — double-tap or tap ● to close';
+  if (hint && drawZonePoints.length >= 3)  hint.textContent = '✏️ ' + drawZonePoints.length + ' corners — double-tap or tap ● to close';
+}
+
+function _dzUpdateVisuals_() {
+  _dzClearVisuals_();
+  if (!mapObj || drawZonePoints.length === 0) return;
+  var pts = drawZonePoints;
+  var lls = pts.map(function(p) { return [p.lat, p.lng]; });
+
+  // Main polyline
+  if (pts.length >= 2) {
+    var line = L.polyline(lls, { color: '#3b82f6', weight: 2.5, dashArray: '7 4', opacity: .9 }).addTo(mapObj);
+    drawZoneVisuals.push(line);
+    // Dashed closing preview line
+    if (pts.length >= 3) {
+      var close = L.polyline([lls[lls.length-1], lls[0]], { color: '#3b82f6', weight: 2, dashArray: '4 6', opacity: .45 }).addTo(mapObj);
+      drawZoneVisuals.push(close);
+    }
+  }
+
+  // Vertex dots
+  pts.forEach(function(p, i) {
+    var isFirst = i === 0;
+    var dot = L.circleMarker([p.lat, p.lng], {
+      radius: isFirst ? 9 : 5,
+      fillColor: isFirst ? '#10b981' : '#3b82f6',
+      color: '#fff', weight: 2.5, fillOpacity: 1,
+      interactive: isFirst && pts.length >= 3
+    }).addTo(mapObj);
+    if (isFirst && pts.length >= 3) {
+      dot.bindTooltip('Tap to close', { permanent: false, direction: 'top' });
+      dot.on('click', function(e) { L.DomEvent.stopPropagation(e); finalizeDrawZone(); });
+    }
+    drawZoneVisuals.push(dot);
+  });
+}
+
+function finalizeDrawZone() {
+  if (drawZonePoints.length < 3) { toast('⚠ Need at least 3 corners', 't-err'); return; }
+  drawZoneMode = false;
+  var btn = document.getElementById('btn-draw-zone-top');
+  if (btn) { btn.classList.remove('active'); btn.textContent = '🏘 Draw Zone'; }
+  document.getElementById('draw-zone-banner').classList.remove('show');
+
+  // Show filled polygon while scanning
+  _dzClearVisuals_();
+  var lls = drawZonePoints.map(function(p) { return [p.lat, p.lng]; });
+  drawZonePolygon = L.polygon(lls, {
+    color: '#3b82f6', weight: 2.5, dashArray: '6 4',
+    fillColor: '#3b82f6', fillOpacity: .12
+  }).addTo(mapObj);
+
+  toast('🔍 Scanning for houses in zone…', 't-info');
+  _dzQueryBuildings_(drawZonePoints.slice());
+}
+
+// Point-in-polygon (ray casting)
+function pointInPolygon(lat, lng, polygon) {
+  var inside = false, n = polygon.length;
+  for (var i = 0, j = n - 1; i < n; j = i++) {
+    var xi = polygon[i].lat, yi = polygon[i].lng;
+    var xj = polygon[j].lat, yj = polygon[j].lng;
+    if (((yi > lng) !== (yj > lng)) && (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+function _dzQueryBuildings_(points) {
+  var polyStr = points.map(function(p) { return p.lat + ' ' + p.lng; }).join(' ');
+
+  // PRIMARY: address nodes — these are what Nominatim resolves when you drop a pin.
+  // Far better coverage in US residential areas than building footprint tags.
+  // SECONDARY: building ways/nodes as a fallback for areas with footprints but no addr tags.
+  var query =
+    '[out:json][timeout:90];\n' +
+    '(\n' +
+    '  node["addr:housenumber"]["addr:street"](poly:"' + polyStr + '");\n' +
+    '  way["addr:housenumber"]["addr:street"](poly:"' + polyStr + '");\n' +
+    '  way["building"]["building"!~"^(commercial|industrial|retail|office|warehouse|garage|shed|barn|church|school|hospital|hotel|supermarket|mall|civic|public|construction)$"](poly:"' + polyStr + '");\n' +
+    '  node["building"="house"](poly:"' + polyStr + '");\n' +
+    '  node["building"="residential"](poly:"' + polyStr + '");\n' +
+    ');\n' +
+    'out center tags;';
+
+  // Try primary endpoint, fall back to mirror on 504/429
+  var OVERPASS_ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter'
+  ];
+
+  function tryOverpass(endpoints, idx) {
+    if (idx >= endpoints.length) {
+      _dzClearVisuals_();
+      toast('⚠ Zone scan failed: all Overpass endpoints timed out', 't-err');
+      return;
+    }
+    fetch(endpoints[idx], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(query)
+    })
+    .then(function(r) {
+      if (r.status === 504 || r.status === 429 || r.status === 502) {
+        toast('⚠ Overpass endpoint ' + (idx+1) + ' slow, trying backup…', 't-info');
+        tryOverpass(endpoints, idx + 1);
+        return null;
+      }
+      if (!r.ok) throw new Error('Overpass returned ' + r.status);
+      return r.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      _dzProcessBuildings_(data.elements || [], points);
+    })
+    .catch(function(err) {
+      if (idx + 1 < endpoints.length) {
+        toast('⚠ Overpass endpoint ' + (idx+1) + ' failed, trying backup…', 't-info');
+        tryOverpass(endpoints, idx + 1);
+      } else {
+        _dzClearVisuals_();
+        toast('⚠ Zone scan failed: ' + String(err.message || err).substring(0, 60), 't-err');
+      }
+    });
+  }
+
+  tryOverpass(OVERPASS_ENDPOINTS, 0);
+}
+
+// US Census Bureau geocoder — free, no API key, best for US residential addresses
+// Falls back to Nominatim if Census returns no match
+function _dzReverseGeocode_(lat, lng, callback) {
+  var censusUrl =
+    'https://geocoding.geo.census.gov/geocoder/locations/coordinates' +
+    '?x=' + encodeURIComponent(lng) +
+    '&y=' + encodeURIComponent(lat) +
+    '&benchmark=2020&format=json';
+
+  fetch(censusUrl)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var matches = data &&
+                    data.result &&
+                    data.result.addressMatches;
+      if (matches && matches.length > 0) {
+        var m    = matches[0];
+        var addr = m.addressComponents || {};
+        var streetNum  = (addr.fromAddress || '').split('-')[0].trim();
+        var streetName = (addr.streetName || '').trim();
+        var suffix     = (addr.suffixType || '').trim();
+        var street     = [streetNum, streetName, suffix].filter(Boolean).join(' ');
+        if (!street) street = (m.matchedAddress || '').split(',')[0].trim();
+        callback({
+          address: street,
+          city:    (addr.city || '').trim(),
+          state:   (addr.state || '').trim(),
+          zip:     (addr.zip || '').trim()
+        });
+      } else {
+        // Census had no match — fall back to Nominatim
+        _dzNominatimReverse_(lat, lng, callback);
+      }
+    })
+    .catch(function() {
+      _dzNominatimReverse_(lat, lng, callback);
+    });
+}
+
+function _dzNominatimReverse_(lat, lng, callback) {
+  var url = 'https://nominatim.openstreetmap.org/reverse?format=json' +
+            '&lat=' + encodeURIComponent(lat) +
+            '&lon=' + encodeURIComponent(lng) +
+            '&zoom=18&addressdetails=1';
+  fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'FieldSalesApp/1.0' } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var a  = data && data.address ? data.address : {};
+      var hn = (a.house_number || '').trim();
+      var rd = (a.road || a.pedestrian || a.path || '').trim();
+      var street = hn && rd ? (hn + ' ' + rd) : (rd || (data.display_name ? data.display_name.split(',')[0].trim() : ''));
+      callback({
+        address: street || ('Building at ' + lat.toFixed(5) + ',' + lng.toFixed(5)),
+        city:    a.city || a.town || a.village || a.hamlet || '',
+        state:   a.state ? stateAbbr(a.state) : '',
+        zip:     a.postcode || ''
+      });
+    })
+    .catch(function() {
+      callback({
+        address: 'Building at ' + lat.toFixed(5) + ',' + lng.toFixed(5),
+        city: '', state: '', zip: ''
+      });
+    });
+}
+
+function _dzProcessBuildings_(elements, polygonPoints) {
+  if (!elements.length) {
+    _dzClearVisuals_();
+    toast('⚠ No buildings found — OSM may not have rooftop data for this area yet', 't-err');
+    return;
+  }
+
+  var buildings = [];
+  elements.forEach(function(el) {
+    var lat = el.type === 'node' ? el.lat : (el.center ? el.center.lat : null);
+    var lng = el.type === 'node' ? el.lon : (el.center ? el.center.lon : null);
+    if (!lat || !lng) return;
+    // Precise point-in-polygon check (Overpass poly filter is slightly approximate)
+    if (!pointInPolygon(lat, lng, polygonPoints)) return;
+    // Skip if close to an existing address pin
+    var exists = addresses.some(function(a) {
+      return a.lat && a.lng && haversineMiles(a.lat, a.lng, lat, lng) < 0.005;
+    });
+    if (exists) return;
+
+    var tags     = el.tags || {};
+    var houseNum = (tags['addr:housenumber'] || '').trim();
+    var street   = (tags['addr:street'] || '').trim();
+    var city     = (tags['addr:city'] || '').trim();
+    var state    = (tags['addr:state'] || '').trim();
+    var zip      = (tags['addr:postcode'] || '').trim();
+    var hasAddr  = !!(houseNum && street);
+
+    buildings.push({
+      lat: lat, lng: lng,
+      address: hasAddr ? (houseNum + ' ' + street) : null,
+      city: city, state: state, zip: zip, hasAddress: hasAddr
+    });
+  });
+
+  if (!buildings.length) {
+    _dzClearVisuals_();
+    toast('✓ All buildings in this zone are already in your list', 't-info');
+    return;
+  }
+
+  // Populate confirm modal
+  drawZonePending = buildings;
+  var withAddr    = buildings.filter(function(b) { return b.hasAddress; }).length;
+  var needGeo     = buildings.length - withAddr;
+
+  document.getElementById('dz-count-big').textContent = buildings.length;
+
+  var parts = [];
+  if (withAddr) parts.push('<span class="dz-ok">✓ ' + withAddr + ' have street addresses from OSM</span>');
+  if (needGeo)  parts.push('<span class="dz-warn">⏳ ' + needGeo + ' will be reverse-geocoded (~' + needGeo + 's)</span>');
+  document.getElementById('dz-breakdown').innerHTML = parts.join('');
+  document.getElementById('dz-geocode-time').textContent = needGeo
+    ? 'Pins appear on the map instantly — addresses fill in as geocoding completes'
+    : 'All addresses are ready — homes will be pinned instantly';
+
+  var terrInput = document.getElementById('dz-territory-input');
+  if (terrInput && !terrInput.value) terrInput.value = activeTerritory || '';
+
+  document.getElementById('draw-zone-confirm-modal').classList.add('open');
+}
+
+function closeDrawZoneConfirm() {
+  document.getElementById('draw-zone-confirm-modal').classList.remove('open');
+  _dzClearVisuals_();
+  drawZonePending = [];
+}
+
+function confirmAddZoneBuildings() {
+  document.getElementById('draw-zone-confirm-modal').classList.remove('open');
+  var terrInput = document.getElementById('dz-territory-input');
+  var zoneTerr  = terrInput ? terrInput.value.trim() : (activeTerritory || '');
+  var buildings = drawZonePending.slice();
+  drawZonePending = [];
+
+  var withAddr  = buildings.filter(function(b) { return  b.hasAddress; });
+  var needGeo   = buildings.filter(function(b) { return !b.hasAddress; });
+
+  // Add OSM-addressed buildings immediately
+  withAddr.forEach(function(b) {
+    _dzAddBuilding_(b.lat, b.lng, b.address, b.city || '', b.state, b.zip, zoneTerr);
+  });
+  buildList(); updateStats();
+
+  if (!needGeo.length) {
+    _dzClearVisuals_();
+    toast('✅ ' + withAddr.length + ' homes added from zone!', 't-ok');
+    return;
+  }
+
+  // Geocode the rest progressively at 1.2/sec (Census allows ~50 req/s but be polite)
+  var total = needGeo.length, done = 0, idx = 0;
+  showGeocodeBar(0, total, 0);
+
+  function geocodeNext() {
+    if (idx >= needGeo.length) {
+      _dzClearVisuals_();
+      buildList(); updateStats(); hideGeocodeBar();
+      toast('✅ ' + (withAddr.length + done) + ' homes added from zone!', 't-ok');
+      return;
+    }
+    var b = needGeo[idx++];
+    _dzReverseGeocode_(b.lat, b.lng, function(result) {
+      _dzAddBuilding_(b.lat, b.lng, result.address, result.city, result.state, result.zip, zoneTerr);
+      done++;
+      showGeocodeBar(done, total, 0);
+      if (done % 15 === 0) { buildList(); updateStats(); }
+      setTimeout(geocodeNext, 1200);
+    });
+  }
+  geocodeNext();
+}
+
+function _dzAddBuilding_(lat, lng, address, city, state, zip, territory) {
+  // Deduplicate by address text + proximity
+  var dup = addresses.find(function(a) {
+    if (a.lat && a.lng && haversineMiles(a.lat, a.lng, lat, lng) < 0.005) return true;
+    if (address && a.address && a.address.toLowerCase() === address.toLowerCase() &&
+        (a.city || '').toLowerCase() === (city || '').toLowerCase()) return true;
+    return false;
+  });
+  if (dup) return;
+
+  var newId = addresses.length > 0
+    ? Math.max.apply(null, addresses.map(function(a) { return a.id; })) + 1 : 0;
+
+  var newAddr = {
+    id: newId, sheetRow: null,
+    address: address, city: city, state: state, zip: zip,
+    territory: territory || activeTerritory || '',
+    lat: lat, lng: lng, activeCount: '',
+    status: 'pending', salesperson: '', note: '', sale: null,
+    _manuallyAdded: true, _zoneAdded: true
+  };
+  addresses.push(newAddr);
+  if (mapObj) placeMarker(newAddr);
+  maybeWriteNewAddrToSheet(newAddr);
 }
 
 // ──────────────────────────────────────────────────────────

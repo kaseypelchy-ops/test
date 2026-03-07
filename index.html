@@ -61,7 +61,7 @@
       <div class="splash-prog-label">Loading session…</div>
     </div>
   </div>
-  <div class="splash-ver">ZITO FIELDOS v2.0.1 • Production • Build 2026.03.03</div>
+  <div class="splash-ver">ZITO FIELDOS v1.0.3 • Production • Build 2026.02.22</div>
 </div>
 
 <!-- ═══════════════════ SIGN-OUT CONFIRM ═══════════════════ -->
@@ -138,6 +138,7 @@
     <div class="tb-stat">Pending: <strong id="st-pend">0</strong></div>
     <div class="tb-actions">
       <button id="btn-drop-pin-top" class="tb-btn" title="Drop a pin / add an address">📍 Drop Pin</button>
+      <button id="btn-draw-zone-top" class="tb-btn tb-btn-zone" onclick="toggleDrawZoneMode()" title="Draw a polygon and auto-add every house inside it">🏘 Draw Zone</button>
       <div id="tb-status-pill" class="is-offline" onclick="openBadge()" title="View my badge">
         <span class="status-dot"></span>
         <span id="tb-status-label">OFFLINE</span>
@@ -528,6 +529,36 @@
   <!-- Pin Drop banner — visible while pin mode is active -->
   <div id="pin-drop-banner">📍 Tap a home on the map to add it</div>
 
+  <!-- Draw Zone banner — visible while polygon drawing is active -->
+  <div id="draw-zone-banner">
+    <span id="draw-zone-banner-text">✏️ Tap to place corners — double-tap or tap ● to close</span>
+    <button class="dz-banner-cancel" onclick="cancelDrawZone()">✕ Cancel</button>
+  </div>
+
+  <!-- Draw Zone Confirm Modal -->
+  <div id="draw-zone-confirm-modal" onclick="if(event.target===this)closeDrawZoneConfirm()">
+    <div class="dz-confirm-box">
+      <div class="dz-confirm-header">
+        <div class="dz-confirm-title">🏘 Zone Scan Complete</div>
+        <button class="dz-confirm-close" onclick="closeDrawZoneConfirm()">✕</button>
+      </div>
+      <div class="dz-confirm-count">
+        <div class="dz-count-num" id="dz-count-big">0</div>
+        <div class="dz-count-label">homes found in zone</div>
+      </div>
+      <div id="dz-breakdown" class="dz-breakdown"></div>
+      <div id="dz-geocode-time" class="dz-geocode-time"></div>
+      <div class="dz-territory-row">
+        <label class="dz-terr-label">Assign territory name</label>
+        <input class="dz-terr-input" id="dz-territory-input" type="text" placeholder="e.g. Palestine_TX">
+      </div>
+      <div class="dz-confirm-actions">
+        <button class="dz-btn-confirm" onclick="confirmAddZoneBuildings()">✅ Add All Homes</button>
+        <button class="dz-btn-cancel"  onclick="closeDrawZoneConfirm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Drop Pin FAB — mobile only, replaces the topbar button which overflows on small screens -->
   <button id="btn-drop-pin-fab" onclick="togglePinDropMode()" title="Drop a pin / add an address">
     📍 Drop Pin
@@ -699,14 +730,8 @@
       <button class="btn-gig"  id="btn-gig"  onclick="submitSale('Gig Speed')"  disabled>🚀 Submit — Gig Speed</button>
 
       <div class="sec-head">No Sale</div>
-      <div class="status-grid">
-        <button class="stbtn" id="sbt-nh"  onclick="pickStatus('Not Home')">🚪 Not Home</button>
-        <button class="stbtn" id="sbt-bs"  onclick="pickStatus('Brightspeed')">⚡ Brightspeed</button>
-        <button class="stbtn" id="sbt-ic"  onclick="pickStatus('In Contract')">📋 In Contract</button>
-        <button class="stbtn" id="sbt-ni"  onclick="pickStatus('Not Interested')">❌ Not Interested</button>
-        <button class="stbtn" id="sbt-gbl" onclick="pickStatus('Go Back Later')">🔄 Go Back Later</button>
-        <button class="stbtn" id="sbt-vac" onclick="pickStatus('Vacant')">🏚️ Vacant</button>
-        <button class="stbtn" id="sbt-biz" onclick="pickStatus('Business')">🏢 Business</button>
+      <div class="status-grid" id="status-grid">
+        <!-- Populated dynamically by renderDispositionButtons() based on territory -->
       </div>
       
       <!-- No Sale Disposition Note (only for Not Home / Not Interested / Go Back Later) -->
