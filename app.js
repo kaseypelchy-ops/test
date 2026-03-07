@@ -1855,7 +1855,9 @@ function updateAddressStatus(addr, status, note) {
       salesperson:     repName,
       note:            (note || ''),
       dispositionNote: (note || ''),
-      knockedAt:       new Date().toISOString()
+      knockedAt:       new Date().toISOString(),
+      lat:             (lastGPS ? lastGPS.lat : (addr.lat  || '')),
+      lng:             (lastGPS ? lastGPS.lng : (addr.lng  || ''))
     })
   }).catch(function(){});
 }
@@ -2013,6 +2015,21 @@ function restoreRepProfile() {
 }
 
 window.addEventListener('load', function(){ try { restoreRepProfile(); } catch(e) {} });
+
+// ── Auto-login from URL params (set by rep-invite.html after onboarding) ──
+window.addEventListener('load', function() {
+  try {
+    var _p = new URLSearchParams(window.location.search);
+    var _urlRep  = (_p.get('rep')       || '').trim();
+    var _urlTeam = (_p.get('territory') || '').trim();
+    var nameEl   = document.getElementById('rep-name');
+    if (_urlRep && nameEl && !nameEl.value) {
+      nameEl.value = _urlRep;
+      // Also pre-store so it persists on refresh
+      try { localStorage.setItem('zito_rep_name', _urlRep); } catch(x) {}
+    }
+  } catch(x) {}
+});
 
 function emailCustomerOffer(pkgKey) {
   var to = '';
